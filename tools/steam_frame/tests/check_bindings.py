@@ -53,7 +53,7 @@ TABLES = {"frameBindings": "frame", "indexBindings": "index", "bindings": "touch
 FRAME_NEEDS = ["g.gripPoseAction", "g.aimPoseAction", "g.hapticAction", "g.thumbstickAction", "g.triggerAction",
                "g.squeezeAction", "g.thumbClickAction", "g.aAction", "g.bAction", "g.xAction", "g.yAction",
                "g.menuAction", "g.viewAction", "g.dpadAction[0]", "g.dpadAction[1]", "g.dpadAction[2]",
-               "g.dpadAction[3]"]
+               "g.dpadAction[3]", "g.bumperAction"]
 # The system layer needs Menu and View on every fallback too.
 SYSTEM_NEEDS = ["g.menuAction", "g.viewAction"]
 

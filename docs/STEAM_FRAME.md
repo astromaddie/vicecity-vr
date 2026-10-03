@@ -82,7 +82,7 @@ Frame on Wi-Fi; over USB networking use `steamos@10.86.200.233`.
 | Input | Action |
 | --- | --- |
 | R Menu | Pause (Start) |
-| L View, short press | Back (VR menu, frontend) |
+| L View, short press | Back in the VR menu and frontend; during play, switch first / third person |
 | L View, hold 1 s | Recentre (buzz on both hands) |
 | L D-pad | The game's D-pad |
 | Both grips + Menu | VR menu (settings, controls, cheats, graphics) |
@@ -90,6 +90,22 @@ Frame on Wi-Fi; over USB networking use `steamos@10.86.200.233`.
 
 The old both-stick-clicks recentre is off on the Frame. The stick clicks stay
 game actions.
+
+**Third person.** Press View briefly during play to switch between first person and third person. Pick the third-person style in the VR menu under LOCOMOTION > VIEW:
+
+- **THIRD: 3D SCREEN** (the default): all gameplay, on foot and in vehicles, plays on the cinema screen from the game's own camera. It uses the same 3D depth as the cutscenes. Your view never moves on its own.
+- **THIRD: OVER SHOULDER**: you stand where the game's chase camera is, with full head tracking and a level horizon. The camera turns only with your own snap or smooth turns. Vehicles use the vehicle third-person view. Entering or leaving a car holds the view still.
+
+On foot in third person:
+
+| Input | Action |
+| --- | --- |
+| Right trigger | Fire |
+| Left trigger | Aim / target |
+| Bumpers | Previous / next weapon |
+| Face buttons, grips | Your CONTROLS bindings |
+
+Tommy is visible, the VR hands and wrist panels are off, and the normal HUD shows. Movement follows the camera, not your head.
 
 **Cutscenes** default to **CINEMA 3D**: the cinema screen keeps its frame, and
 the scene has depth behind it, like a 3D film. To change it, open the VR menu
@@ -134,4 +150,5 @@ their game. Check first, for example with
 | Lepton is API 30, Vulkan 1.1, no headtracking feature; SteamVR runtime manifest present | device, read-only |
 | Installs and plays from the ViceCityVR Steam title; data and settings in `~/Documents/ViceCityVR` | **worn** (user report, 2026-10-03) |
 | CINEMA 3D cutscenes | host build only, **not worn** |
+| Third-person view (3D screen, over shoulder, View toggle, third-person pad) | host build only, **not worn** |
 | Individual controls, colours, performance | not yet reported |

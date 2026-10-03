@@ -27,6 +27,11 @@
 #include <string.h>
 
 extern bool gVrFirstPersonActive;
+#if MIAMIVR_STEAM_FRAME
+// Third person over the shoulder, on foot: the stock weapon handling, the
+// crosshair and no tracked hands (set in android.cpp).
+extern bool gVrThirdPersonOnFoot;
+#endif
 extern int GetVrWeaponTypeForSlot(int slot);
 extern const char *GetVrWeaponName(int weaponType);
 
@@ -571,6 +576,9 @@ IsGameplayAvailable()
 {
 	CPlayerPed *player = FindPlayerPed();
 	return gVrFirstPersonActive && player && !player->DyingOrDead() &&
+#if MIAMIVR_STEAM_FRAME
+		!gVrThirdPersonOnFoot &&
+#endif
 		!FrontEndMenuManager.m_bMenuActive &&
 		!CCutsceneMgr::IsRunning() && !CCutsceneMgr::IsCutsceneProcessing() &&
 		!TheCamera.m_WideScreenOn && !CTimer::GetIsPaused();
@@ -2553,7 +2561,15 @@ ApplyTouchInput(CControllerState *state)
 	return true;
 }
 
-bool AreTrackedHandsEnabled() { LoadSettings(); return gHandsEnabled && gVrFirstPersonActive; }
+bool AreTrackedHandsEnabled()
+{
+	LoadSettings();
+#if MIAMIVR_STEAM_FRAME
+	if(gVrThirdPersonOnFoot)
+		return false;
+#endif
+	return gHandsEnabled && gVrFirstPersonActive;
+}
 bool ShouldUseTrackedHands()
 {
 	return AreTrackedHandsEnabled() &&
@@ -2821,7 +2837,14 @@ bool IsPhysicalMeleeType(int weaponType) { return IsPhysicalMelee(weaponType); }
 bool IsPhysicalThrowableType(int weaponType) { return IsPhysicalThrowable(weaponType); }
 bool IsPhysicalWeaponType(int weaponType) { return IsPhysicalGun(weaponType) || IsPhysicalMelee(weaponType) || IsPhysicalThrowable(weaponType); }
 bool IsPhysicalWeaponInteractionActive() { return AreTrackedHandsEnabled() && IsGameplayAvailable() && !FindPlayerVehicle(); }
-bool IsQuestFirstPersonOnFoot() { return gVrFirstPersonActive && !FindPlayerVehicle(); }
+bool IsQuestFirstPersonOnFoot()
+{
+#if MIAMIVR_STEAM_FRAME
+	if(gVrThirdPersonOnFoot)
+		return false;
+#endif
+	return gVrFirstPersonActive && !FindPlayerVehicle();
+}
 bool IsTrackedWeaponHeld(int hand)
 {
 	return hand >= 0 && hand < VR_HAND_COUNT &&

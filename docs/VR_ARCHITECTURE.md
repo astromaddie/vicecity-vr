@@ -84,7 +84,7 @@ The Frame controller is a split gamepad. Its bindings:
 | A B X Y (right) | A B X Y as on the Quest, through the CONTROLS remap table | Quest X and Y are on the left hand |
 | L D-pad | The game's D-pad, in the frontend and in play | new on the Frame |
 | Sticks, triggers, grips, stick clicks | As on the Quest | |
-| Bumpers | unbound | open item |
+| Bumpers | Third person on foot: previous / next weapon (L2 / R2). First person: unbound | Frame profile only |
 | Both grips + Menu | VR menu (the Quest port's chord) | |
 
 - The Frame profile is suggested only when `XR_VALVE_frame_controller_interaction` is advertised.
@@ -102,6 +102,7 @@ The Frame controller is a split gamepad. Its bindings:
 | Lepton facts in section 1 | device, read-only |
 | Install from the Steam library title, game boots and plays, data in `~/Documents/ViceCityVR` | **worn**: the user reported "it works good" (2026-10-03, first session). The game wrote `vr_settings.ini` and its logs to the Documents folder |
 | CINEMA 3D cutscenes | host build, plus a numeric check of the perceived depths. **Not worn** |
+| Third-person view (`ViewMode`: 3D SCREEN / OVER SHOULDER, View short-press toggle) | host build. **Not worn**. Risks: chase-camera collision jumps, crosshair against the head-locked HUD plane, screen-to-stereo switches on mode change |
 | Diagnostics (`vr-diag.ini`: force_render, synthetic head, eye dumps, `[vr-perf]`) | host build |
 | Fresh `build.sh` from the kit reproduces the dev tree byte-for-byte and builds both APKs | host build |
 | Stereo eye dumps at 0, 90 and 180 degrees of yaw | **not run** |

@@ -386,6 +386,9 @@ updateFrameSystemLayer(const xrvk::ControllerInput &controllers)
 		     (events & SFVR_VIEW_RECALIBRATE_HEIGHT) ? "View hold 3 s" :
 		     "View hold 1 s");
 		androidgame::VrRecenterView();
+		// A theater screen (menus, cutscenes, third person on the screen)
+		// re-places itself in front of where the head now looks.
+		xrvk::resetTheaterAnchor();
 		const sfvr_haptic_pulse buzz = sfvr_haptic_default(SFVR_HAPTIC_SYSTEM);
 		for(int hand = 0; hand < 2; hand++)
 			xrvk::triggerHaptic(hand, buzz.amplitude, 0.0f,
@@ -428,6 +431,8 @@ renderGameFrame(VkImage image, VkImageView view, const float viewProj[2][16],
 	pad.dpadDown = controllers.dpadDown;
 	pad.dpadLeft = controllers.dpadLeft;
 	pad.dpadRight = controllers.dpadRight;
+	pad.leftBumper = controllers.leftBumper;
+	pad.rightBumper = controllers.rightBumper;
 	pad.viewBack = updateFrameSystemLayer(controllers);
 #endif
 	for(int hand = 0; hand < 2; hand++){
@@ -459,6 +464,14 @@ renderGameFrame(VkImage image, VkImageView view, const float viewProj[2][16],
 	}
 
 	const bool theaterBefore = androidgame::VrShouldUseTheaterMode();
+#if MIAMIVR_STEAM_FRAME
+	// Gameplay on the theater screen (third person, 3D screen) is a world
+	// frame, not a flat menu one; sampled with the mode, before Step.
+	const bool screenGameplayFrame = theaterBefore &&
+		androidgame::VrScreenGameplayActive();
+#else
+	const bool screenGameplayFrame = false;
+#endif
 	xrvk::setTheaterMode(theaterBefore);
 	if(theaterBefore){
 		float theaterViewProj[16], theaterIm2D[16], theaterDistance;
@@ -542,7 +555,10 @@ renderGameFrame(VkImage image, VkImageView view, const float viewProj[2][16],
 	// camera-raster implementation on Vulkan. This final-image implementation
 	// is independent of it and reproduces the default POSTFX_NORMAL path
 	// directly, using the blur colour populated by Vice City's timecycle.
+	// Screen gameplay is world content on a flat screen, the same as a
+	// cinema-mode cutscene, so it keeps the filter that menus do not get.
 	const bool cutsceneFrame =
+		screenGameplayFrame ||
 		CGame::playingIntro ||
 		CCutsceneMgr::IsCutsceneProcessing() ||
 		CCutsceneMgr::IsRunning() ||

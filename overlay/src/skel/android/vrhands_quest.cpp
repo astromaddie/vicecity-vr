@@ -15,6 +15,11 @@
 #include <android/log.h>
 
 extern bool gVrFirstPersonActive;
+#if MIAMIVR_STEAM_FRAME
+// Third person over the shoulder, on foot: the player is drawn whole and has
+// no hands of his own to show or wear panels on.
+extern bool gVrThirdPersonOnFoot;
+#endif
 
 namespace androidgame {
 namespace {
@@ -96,6 +101,10 @@ RenderTrackedHands(void)
 {
 	if(!::gVrFirstPersonActive)
 		return;
+#if MIAMIVR_STEAM_FRAME
+	if(::gVrThirdPersonOnFoot)
+		return;
+#endif
 	// A dead Tommy is drawn with his own arms, and the tracked pair would
 	// be left floating over the body he is lying in. A cutscene is the
 	// same case: the actors have their own arms, and the stereo cutscene
@@ -135,6 +144,9 @@ VrGetWristAnchorPose(int hand, float position[3], float side[3],
 #ifdef GTA_VR_WEAPONS
 	CMatrix matrix;
 	if(!::gVrFirstPersonActive ||
+#if MIAMIVR_STEAM_FRAME
+	   ::gVrThirdPersonOnFoot ||
+#endif
 	   !OculusVR::GetTrackedVisualHandMatrix(hand, &matrix))
 		return false;
 	// PoseToMatrix builds Right/Up/Forward from the grip quaternion's local

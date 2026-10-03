@@ -150,6 +150,7 @@ struct ControllerInput
 	// recentre (XrEventDataReferenceSpaceChangePending) latched until read.
 	bool view;
 	bool dpadUp, dpadDown, dpadLeft, dpadRight;
+	bool leftBumper, rightBumper;
 	bool systemRecentre;
 #endif
 };
@@ -198,6 +199,11 @@ constexpr float kTheaterScreenHeight = 1.44f;
 // 3D cinema: show each eye its own array layer on the theater screen instead
 // of layer 0 to both. Takes effect with the next submitted frame.
 void setTheaterStereo(bool enabled);
+
+// Drops the theater screen's latched placement, so it is set again in front
+// of the head on the next theater frame. A recentre of a screen the player
+// sits at an angle to would otherwise leave it where it was.
+void resetTheaterAnchor(void);
 #endif
 
 // Predicted display time of the frame currently being rendered, in

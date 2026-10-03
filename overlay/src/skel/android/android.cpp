@@ -525,6 +525,16 @@ CEntity *gVrPlayerEntity;
 // reads it to drop the occupant head the camera is sitting inside.
 bool gVrInVehicle;
 bool gVrHidePlayerBody = true;
+#if MIAMIVR_STEAM_FRAME
+// Third person over the shoulder, on foot: the chase camera is the view, so
+// the tracked hands and the physical weapon layer stand down and Vice City's
+// own weapon handling takes over. Read by QuestWeaponVR and vrhands_quest.
+bool gVrThirdPersonOnFoot;
+// The last over-the-shoulder view, held through vehicle enter/exit.
+static CVector gVrChaseHoldHead;
+static CVector gVrChaseHoldForward;
+static bool gVrChaseHoldValid;
+#endif
 
 // The shape of the cinema screen theater mode draws on. The game lays its
 // interface out for this ratio while theater mode is up, so the plane in
@@ -555,6 +565,29 @@ androidgame::VrGetViewBasis(float position[3], float right[3], float up[3],
 	return true;
 }
 
+#if MIAMIVR_STEAM_FRAME
+// THIRD: 3D SCREEN. Gameplay itself plays on the theater screen from the
+// stock camera, on foot and in vehicles. A remote-controlled vehicle counts:
+// its camera is the stock chase camera too and the screen is the steadier way
+// to watch it. Cutscenes are left to their own setting, so a stereo cutscene
+// still comes out of the screen; menus and loading already use it.
+bool
+androidgame::VrScreenGameplayActive(void)
+{
+	return androidgame::VrThirdPersonScreen() &&
+		gGameState == GS_PLAYING_GAME &&
+		FindPlayerPed() != nil &&
+		!FrontEndMenuManager.m_bGameNotLoaded &&
+		!FrontEndMenuManager.m_bMenuActive &&
+		!FrontEndMenuManager.m_bWantToRestart &&
+		!FrontEndMenuManager.m_bWantToLoad &&
+		!CGame::playingIntro &&
+		!CCutsceneMgr::IsCutsceneProcessing() &&
+		!CCutsceneMgr::IsRunning() &&
+		!TheCamera.m_WideScreenOn;
+}
+#endif
+
 bool
 androidgame::VrShouldUseTheaterMode(void)
 {
@@ -583,13 +616,27 @@ androidgame::VrShouldUseTheaterMode(void)
 		FrontEndMenuManager.m_bWantToLoad ||
 		CGame::playingIntro ||
 		FindPlayerPed() == nil ||
-		cutsceneOnScreen;
+		cutsceneOnScreen
+#if MIAMIVR_STEAM_FRAME
+		|| androidgame::VrScreenGameplayActive()
+#endif
+		;
 }
 
 #if MIAMIVR_STEAM_FRAME
 float
 androidgame::VrCinema3DDepthThisFrame(void)
 {
+	// Gameplay on the screen carries the cutscene setting's depth, and a
+	// player who chose the flat cinema for cutscenes gets it flat here too.
+	// STEREO cutscenes have no depth of their own to borrow, so gameplay
+	// takes the middle 3D level.
+	if(androidgame::VrScreenGameplayActive()){
+		const float depth = androidgame::VrCinema3DDepth();
+		if(depth > 0.0f)
+			return depth;
+		return androidgame::VrCutsceneMode() != 0 ? 0.55f : 0.0f;
+	}
 	// Only a cutscene's own camera gets depth. Menus, loading screens and the
 	// intro's world rebuild stay flat on the same screen.
 	const bool cutscene = CCutsceneMgr::IsCutsceneProcessing() ||
@@ -865,10 +912,36 @@ VrUpdateFirstPersonAnchor(bool postPhysics)
 #else
 	const bool thirdPersonVehicle = false;
 #endif
+#if MIAMIVR_STEAM_FRAME
+	// THIRD: 3D SCREEN has no first person at all: the stock camera is drawn
+	// on the theater screen, so the body is shown, the tracked weapons stay
+	// off and the physical-input layer never takes the pad.
+	const bool screenGameplay = androidgame::VrScreenGameplayActive();
+	// THIRD: OVER SHOULDER keeps the stereo first-person machinery (field of
+	// view, anchor, level horizon) but rides the stock chase camera on foot,
+	// as a third person vehicle does. The enter/exit window is excluded for
+	// the reason given above.
+	const bool thirdPersonOnFoot = androidgame::VrThirdPersonShoulder() &&
+		player != nil && !player->InVehicle() && !remoteMode &&
+		!vehicleTransition;
+	// Getting into or out of a vehicle the game slides its camera between
+	// the two positions, which is why riding it is off for that window. The
+	// first-person fallback the vehicle view uses there is no good either for
+	// a player who chose third person to get away from it, so the last chase
+	// view is held still until the transition ends.
+	const bool thirdPersonHold = androidgame::VrThirdPersonShoulder() &&
+		player != nil && !remoteMode && vehicleTransition &&
+		gVrChaseHoldValid;
+#else
+	const bool screenGameplay = false;
+	const bool thirdPersonOnFoot = false;
+	const bool thirdPersonHold = false;
+#endif
 	const bool wantFirstPerson =
 		gGameState == GS_PLAYING_GAME &&
 		player != nil &&
 		!remoteMode &&
+		!screenGameplay &&
 		!FrontEndMenuManager.m_bMenuActive &&
 		!CGame::playingIntro &&
 		!CCutsceneMgr::IsCutsceneProcessing() &&
@@ -890,10 +963,15 @@ VrUpdateFirstPersonAnchor(bool postPhysics)
 		 CCutsceneMgr::IsCutsceneProcessing() ||
 		 TheCamera.m_WideScreenOn);
 	gVrFirstPersonActive = wantFirstPerson || cinematicCutscene;
+#if MIAMIVR_STEAM_FRAME
+	gVrThirdPersonOnFoot = thirdPersonOnFoot || thirdPersonHold;
+	if(!androidgame::VrThirdPersonShoulder())
+		gVrChaseHoldValid = false;
+#endif
 	gVrPlayerEntity = (CEntity*)player;
 	gVrInVehicle = wantFirstPerson && player->InVehicle() &&
 		player->m_pMyVehicle != nil &&
-		!thirdPersonVehicle;
+		!thirdPersonVehicle && !thirdPersonHold;
 	UpdateQuestVehicleSeatRecenter(player,
 		gVrInVehicle && !vehicleTransition && playerVehicleState == PED_DRIVING &&
 		!FrontEndMenuManager.m_bGameNotLoaded && !FrontEndMenuManager.m_bWantToRestart &&
@@ -909,7 +987,8 @@ VrUpdateFirstPersonAnchor(bool postPhysics)
 // looks back at Tommy. Hiding him then plays the shot over empty
 // pavement, so he is drawn from the blow that kills him.
 #ifdef GTA_VR_WEAPONS
-	gVrHidePlayerBody = !thirdPersonVehicle &&
+	gVrHidePlayerBody = !thirdPersonVehicle && !thirdPersonOnFoot &&
+		!thirdPersonHold &&
 		(!gVrInVehicle || OculusVR::IsImmersiveDrivingActive()) &&
 		!(player != nil && player->DyingOrDead());
 #else
@@ -931,7 +1010,7 @@ VrUpdateFirstPersonAnchor(bool postPhysics)
 		// time and curve the walk away. Use the gameplay camera, as the
 		// desktop build does.
 		const bool headModeOnFoot = !gVrInVehicle && !thirdPersonVehicle &&
-			!vehicleTransition &&
+			!thirdPersonOnFoot && !thirdPersonHold && !vehicleTransition &&
 			(androidgame::VrUsesHeadRelativeMovement() ||
 			 androidgame::VrUsesExperimentalHeadTurning());
 		if(headModeOnFoot){
@@ -943,6 +1022,22 @@ VrUpdateFirstPersonAnchor(bool postPhysics)
 			if(cameraForward.MagnitudeSqr() > 0.000001f){
 				cameraForward.Normalise();
 				forward = cameraForward;
+			}
+		}
+#if MIAMIVR_STEAM_FRAME
+		if(thirdPersonHold)
+			forward = gVrChaseHoldForward;
+#endif
+		if(thirdPersonOnFoot){
+			// The chase camera's heading is the frame's heading, and so the
+			// reference the stick movement is calibrated on: the Orientation
+			// write below would otherwise turn "forward" to where the ped faces
+			// rather than where the camera looks.
+			CVector chaseForward = TheCamera.Cams[TheCamera.ActiveCam].Front;
+			chaseForward.z = 0.0f;
+			if(chaseForward.MagnitudeSqr() > 0.0001f){
+				chaseForward.Normalise();
+				forward = chaseForward;
 			}
 		}
 		CVector horizontalForward = forward;
@@ -1024,7 +1119,7 @@ VrUpdateFirstPersonAnchor(bool postPhysics)
 					vrForward[2]);
 		}
 		head += nudge * 0.12f;
-		if(thirdPersonVehicle){
+		if(thirdPersonVehicle || thirdPersonOnFoot){
 			// Ride the stock chase camera instead of a seat: its position
 			// and heading, but through the first-person machinery, so the
 			// basis stays yaw-only (level horizon), the eye field of view is
@@ -1037,7 +1132,18 @@ VrUpdateFirstPersonAnchor(bool postPhysics)
 				forward = chaseForward;
 			}
 			head = TheCamera.GetPosition();
+#if MIAMIVR_STEAM_FRAME
+			gVrChaseHoldHead = head;
+			gVrChaseHoldForward = forward;
+			gVrChaseHoldValid = true;
+#endif
 		}
+#if MIAMIVR_STEAM_FRAME
+		if(thirdPersonHold){
+			head = gVrChaseHoldHead;
+			forward = gVrChaseHoldForward;
+		}
+#endif
 #ifdef GTA_VR_WEAPONS
 		if(gVrInVehicle){
 			// The desktop vehicle view applies both the global vertical seat
@@ -1173,6 +1279,10 @@ static void
 ApplyQuestSnapTurn(float stickX)
 {
 	if(!androidgame::VrUsesSnapTurn() || FindPlayerVehicle() ||
+#if MIAMIVR_STEAM_FRAME
+	   // On the screen the right stick drives the stock camera raw.
+	   androidgame::VrThirdPersonScreen() ||
+#endif
 	   CWorld::Players[CWorld::PlayerInFocus].IsPlayerInRemoteMode() ||
 	   gGameState != GS_PLAYING_GAME ||
 	   FrontEndMenuManager.m_bGameNotLoaded ||
@@ -1256,11 +1366,25 @@ CapturePad(RwInt32 padID)
 		!CCutsceneMgr::IsCutsceneProcessing() &&
 		!trackedScopeActive &&
 		!TheCamera.m_WideScreenOn;
+#if MIAMIVR_STEAM_FRAME
+	// Third person on foot, either style: the stock camera is the reference
+	// for movement, and the buttons follow the flat game's pad (see below).
+	const bool thirdPersonPad = onFootGameplay &&
+		(androidgame::VrThirdPersonScreen() ||
+		 androidgame::VrThirdPersonShoulder());
+	// The screen has no head to turn with: the stick drives the camera as it
+	// does on a pad, with no snap, scaling or head-driven turning.
+	const bool screenView = onFootGameplay &&
+		androidgame::VrThirdPersonScreen();
+#else
+	const bool thirdPersonPad = false;
+	const bool screenView = false;
+#endif
 	float localHeadYaw = 0.0f;
 	const bool localHeadYawValid =
-		onFootGameplay &&
+		onFootGameplay && !thirdPersonPad &&
 		rw::vulkan::getFirstPersonLocalHeadYaw(&localHeadYaw);
-	if(onFootGameplay){
+	if(onFootGameplay && !screenView){
 		if(androidgame::VrUsesSnapTurn())
 			rightStickX = 0.0f;
 		else
@@ -1343,7 +1467,23 @@ CapturePad(RwInt32 padID)
 	// brake/reverse (Square), and the grips are analogue shoulder buttons on a
 	// 0..255 scale. QuestWeaponVR rebuilds the same buttons on foot without the
 	// triggers, which belong to the weapon there.
-	androidgame::VrApplyPadBindings(&state, bound, true);
+	androidgame::VrApplyPadBindings(&state, bound, !thirdPersonPad);
+#if MIAMIVR_STEAM_FRAME
+	if(thirdPersonPad){
+		// A pad's own layout: the right trigger fires and the left aims (R1
+		// is the lock-on / free-aim button of the default controller setup),
+		// as the physical weapons would otherwise own them. The bumpers
+		// cycle weapons through the same L2/R2 pair the on-screen icon uses.
+		state.Circle = Max(state.Circle,
+			(int16)(clamp(in.rightTrigger, 0.0f, 1.0f)*255.0f));
+		state.RightShoulder1 = Max(state.RightShoulder1,
+			(int16)(clamp(in.leftTrigger, 0.0f, 1.0f)*255.0f));
+		if(in.leftBumper)
+			state.LeftShoulder2 = Max(state.LeftShoulder2, (int16)255);
+		if(in.rightBumper)
+			state.RightShoulder2 = Max(state.RightShoulder2, (int16)255);
+	}
+#endif
 	state.Start = in.menu ? 255 : 0;
 	if(remoteMode && in.a){
 		if(padMode == 3)

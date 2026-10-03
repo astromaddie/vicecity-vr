@@ -417,6 +417,8 @@ struct State
 	XrAction viewAction = XR_NULL_HANDLE;
 	XrAction dpadAction[4] = { XR_NULL_HANDLE, XR_NULL_HANDLE,
 	                           XR_NULL_HANDLE, XR_NULL_HANDLE };  // up down left right
+	// The shoulder bumpers, one per hand; the Frame profile only.
+	XrAction bumperAction = XR_NULL_HANDLE;
 #endif
 	ControllerInput input = {};
 #if MIAMIVR_STEAM_FRAME
@@ -1007,6 +1009,8 @@ createActions(void)
 	                             XR_ACTION_TYPE_BOOLEAN_INPUT, false);
 	g.dpadAction[3] = makeAction("dpadright", "D-pad Right",
 	                             XR_ACTION_TYPE_BOOLEAN_INPUT, false);
+	g.bumperAction = makeAction("bumper", "Bumper",
+	                            XR_ACTION_TYPE_BOOLEAN_INPUT, true);
 #endif
 
 	struct Binding { XrAction action; const char *path; };
@@ -1066,6 +1070,8 @@ createActions(void)
 		{ g.dpadAction[1],    "/user/hand/left/input/dpad_down/click" },
 		{ g.dpadAction[2],    "/user/hand/left/input/dpad_left/click" },
 		{ g.dpadAction[3],    "/user/hand/left/input/dpad_right/click" },
+		{ g.bumperAction,     "/user/hand/left/input/bumper/click" },
+		{ g.bumperAction,     "/user/hand/right/input/bumper/click" },
 	};
 	// Index has A and B on each hand and no Menu or View: left B is Menu
 	// (Start), left A is View (back, hold to recentre). X and Y are not
@@ -1229,6 +1235,7 @@ syncInput(void)
 		g.input.view = false;
 		g.input.dpadUp = g.input.dpadDown = false;
 		g.input.dpadLeft = g.input.dpadRight = false;
+		g.input.leftBumper = g.input.rightBumper = false;
 #endif
 		return;
 	}
@@ -1259,6 +1266,8 @@ syncInput(void)
 	g.input.dpadDown = readBool(g.dpadAction[1], -1);
 	g.input.dpadLeft = readBool(g.dpadAction[2], -1);
 	g.input.dpadRight = readBool(g.dpadAction[3], -1);
+	g.input.leftBumper = readBool(g.bumperAction, 0);
+	g.input.rightBumper = readBool(g.bumperAction, 1);
 #endif
 }
 
@@ -3261,6 +3270,13 @@ setTheaterStereo(bool enabled)
 	if(enabled != g.theaterStereo)
 		LOGI("[vr] theater screen %s", enabled ? "3D (one layer per eye)" : "flat");
 	g.theaterStereo = enabled;
+}
+
+void
+resetTheaterAnchor(void)
+{
+	// The screen latches in front of the head the next theater frame.
+	g.theaterAnchorValid = false;
 }
 #endif
 

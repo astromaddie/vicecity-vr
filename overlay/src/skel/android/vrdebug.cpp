@@ -260,6 +260,20 @@ static const int kCutsceneModeOrder[] = {
 	VR_CUTSCENE_CINEMA, VR_CUTSCENE_CINEMA_3D_SUBTLE, VR_CUTSCENE_CINEMA_3D,
 	VR_CUTSCENE_CINEMA_3D_DEEP, VR_CUTSCENE_STEREO
 };
+// A third person view for the player who finds first person too intense.
+// FIRST PERSON is the shipped view; the other two both play from Vice City's
+// own camera, either on the cinema screen (the whole game as a flat picture
+// with 3D depth) or in stereo from behind the shoulder. The style is the
+// last third person one chosen, so a short press of View swings between it
+// and first person.
+enum
+{
+	VR_VIEW_FIRST_PERSON = 0,
+	VR_VIEW_THIRD_SCREEN = 1,
+	VR_VIEW_THIRD_SHOULDER = 2,
+};
+static int gViewMode;
+static int gThirdPersonStyle = VR_VIEW_THIRD_SCREEN;
 #endif
 // Which camera this cutscene is being watched from: 0 is the director's
 // own, 1 and up are the staged actors in the order the scene put them
@@ -750,7 +764,12 @@ enum eVrVehicleMenuItem {
 };
 
 enum eVrLocomotionMenuItem {
+#if MIAMIVR_STEAM_FRAME
+	VR_LOCOMOTION_VIEW = 0,
+	VR_LOCOMOTION_MOVEMENT_ORIENTATION,
+#else
 	VR_LOCOMOTION_MOVEMENT_ORIENTATION = 0,
+#endif
 	VR_LOCOMOTION_TURN_MODE,
 	VR_LOCOMOTION_TURN_SENSITIVITY,
 	VR_LOCOMOTION_SNAP_ANGLE,
@@ -1045,6 +1064,12 @@ LoadVrSettings(void)
 	gCutsceneMode = clamp((int)(int32)GetPrivateProfileIntA("VR",
 		"CutsceneMode", VR_CUTSCENE_CINEMA_3D, ".\\vr_settings.ini"),
 		VR_CUTSCENE_CINEMA, VR_CUTSCENE_CINEMA_3D_DEEP);
+	gViewMode = clamp((int)(int32)GetPrivateProfileIntA("VR",
+		"ViewMode", VR_VIEW_FIRST_PERSON, ".\\vr_settings.ini"),
+		VR_VIEW_FIRST_PERSON, VR_VIEW_THIRD_SHOULDER);
+	gThirdPersonStyle = clamp((int)(int32)GetPrivateProfileIntA("VR",
+		"ThirdPersonStyle", VR_VIEW_THIRD_SCREEN, ".\\vr_settings.ini"),
+		VR_VIEW_THIRD_SCREEN, VR_VIEW_THIRD_SHOULDER);
 #else
 	gCutsceneMode = clamp((int)(int32)GetPrivateProfileIntA("VR",
 		"CutsceneMode", 0, ".\\vr_settings.ini"), 0, 1);
@@ -1496,6 +1521,29 @@ SaveVrInteger(const char *key, int value)
 	snprintf(text, sizeof(text), "%d", value);
 	WritePrivateProfileStringA("VR", key, text, ".\\vr_settings.ini");
 }
+
+#if MIAMIVR_STEAM_FRAME
+static void
+SetViewMode(int mode)
+{
+	mode = clamp(mode, (int)VR_VIEW_FIRST_PERSON, (int)VR_VIEW_THIRD_SHOULDER);
+	if(mode == gViewMode)
+		return;
+	gViewMode = mode;
+	if(mode != VR_VIEW_FIRST_PERSON){
+		gThirdPersonStyle = mode;
+		SaveVrInteger("ThirdPersonStyle", gThirdPersonStyle);
+	}
+	SaveVrInteger("ViewMode", gViewMode);
+	// The anchor was latched against the old view's camera; relatching now
+	// keeps the first frame of the new one from turning the world.
+	androidgame::VrRecenterView();
+	__android_log_print(ANDROID_LOG_INFO, "MiamiVR", "[vr] view mode -> %s",
+		mode == VR_VIEW_THIRD_SCREEN ? "third person, 3D screen" :
+		mode == VR_VIEW_THIRD_SHOULDER ? "third person, over shoulder" :
+		"first person");
+}
+#endif
 
 static int
 VrControlsRowSource(int item)
@@ -2371,6 +2419,23 @@ VrDebugUpdate(const PadInput &in)
 		androidgame::VrRecenterView();
 	gTouchRecenterShortcutDown = recenterShortcut;
 
+#if MIAMIVR_STEAM_FRAME
+	// View's short press swaps first person and the chosen third person style
+	// during play. The menu, the frontend and cutscenes already own that press
+	// as "back" (or have no use for it), so it only counts when none of them
+	// is up. gVrMenuVisible is read before this frame's menu code can close
+	// the menu with the same press.
+	if(in.viewBack && !gVrMenuVisible && gGameState == GS_PLAYING_GAME &&
+	   !FrontEndMenuManager.m_bMenuActive &&
+	   !FrontEndMenuManager.m_bGameNotLoaded &&
+	   !FrontEndMenuManager.m_bWantToRestart &&
+	   !FrontEndMenuManager.m_bWantToLoad &&
+	   !CGame::playingIntro && FindPlayerPed() != nil &&
+	   !CCutsceneMgr::IsRunning() && !CCutsceneMgr::IsCutsceneProcessing() &&
+	   !TheCamera.m_WideScreenOn)
+		androidgame::VrToggleThirdPerson();
+#endif
+
 	// The profiler had a chord of its own, both grips and Y. Both grips are
 	// how a weapon is picked up, so players kept summoning the counters by
 	// accident and could not read the game through them. It is a developer
@@ -3120,6 +3185,11 @@ VrDebugUpdate(const PadInput &in)
 		         (positivePulse || decreasePulse)){
 			const int direction = decreasePulse ? -1 : 1;
 			switch(gVrLocomotionSelection){
+#if MIAMIVR_STEAM_FRAME
+			case VR_LOCOMOTION_VIEW:
+				SetViewMode((gViewMode+3+direction)%3);
+				break;
+#endif
 			case VR_LOCOMOTION_MOVEMENT_ORIENTATION:
 				// BODY ignores physical rotation: a standing player who turns
 				// around and pushes forward walks the way they used to face.
@@ -4281,6 +4351,13 @@ DrawQuestLocomotionPage(void)
 	BeginFullVrMenuPage("LOCOMOTION",
 		"MOVEMENT AND COMFORT TURNING");
 	char rows[VR_LOCOMOTION_ITEM_COUNT][112];
+#if MIAMIVR_STEAM_FRAME
+	snprintf(rows[VR_LOCOMOTION_VIEW], sizeof(rows[0]),
+		"VIEW  < %s >",
+		gViewMode == VR_VIEW_THIRD_SCREEN ? "THIRD: 3D SCREEN" :
+		gViewMode == VR_VIEW_THIRD_SHOULDER ? "THIRD: OVER SHOULDER" :
+		"FIRST PERSON");
+#endif
 	snprintf(rows[VR_LOCOMOTION_MOVEMENT_ORIENTATION], sizeof(rows[0]),
 		"MOVEMENT DIRECTION  < %s >",
 		gQuestMovementOrientation ==
@@ -4321,17 +4398,28 @@ DrawQuestLocomotionPage(void)
 		"REFRESH RATE  < %d HZ >", gQuestRefreshRateHz);
 	strcpy(rows[VR_LOCOMOTION_RECENTER], "RECENTER VIEW");
 	strcpy(rows[VR_LOCOMOTION_BACK], "BACK TO SETTINGS");
+#if MIAMIVR_STEAM_FRAME
+	// Ten rows: a tighter pitch, with the hint and footer pushed down.
+	const int rowPitch = 54, hintY = 704, footerY = 726;
+#else
+	const int rowPitch = 68, hintY = 668, footerY = 718;
+#endif
 	for(int item = 0; item < VR_LOCOMOTION_ITEM_COUNT; item++)
-		DrawFullVrMenuRow(rows[item], 190+item*68, 3,
+		DrawFullVrMenuRow(rows[item], 190+item*rowPitch, 3,
 			item == gVrLocomotionSelection);
 	// The one setting a standing player can be hurt by without knowing why.
 	if(gVrLocomotionSelection == VR_LOCOMOTION_MOVEMENT_ORIENTATION)
 		DrawVrMenuText(
 			"BODY IGNORES PHYSICAL TURNS - PRESS A TO REACH IT",
-			VR_MENU_WIDTH/2, 668, 2, 255, 205, 90);
+			VR_MENU_WIDTH/2, hintY, 2, 255, 205, 90);
+#if MIAMIVR_STEAM_FRAME
+	else if(gVrLocomotionSelection == VR_LOCOMOTION_VIEW)
+		DrawVrMenuText("SHORT PRESS VIEW TO SWITCH IN PLAY",
+			VR_MENU_WIDTH/2, hintY, 2, 255, 205, 90);
+#endif
 	DrawVrMenuText(
 		"LEFT STICK SELECT   L2 PREVIOUS   R2 OR A NEXT   B BACK",
-		VR_MENU_WIDTH/2, 718, 2, 170, 190, 210);
+		VR_MENU_WIDTH/2, footerY, 2, 170, 190, 210);
 }
 
 static void
@@ -5003,6 +5091,33 @@ VrCinema3DDepth(void)
 	}
 	return 0.0f;
 }
+
+int
+VrViewMode(void)
+{
+	LoadVrSettings();
+	return gViewMode;
+}
+
+bool
+VrThirdPersonScreen(void)
+{
+	return VrViewMode() == VR_VIEW_THIRD_SCREEN;
+}
+
+bool
+VrThirdPersonShoulder(void)
+{
+	return VrViewMode() == VR_VIEW_THIRD_SHOULDER;
+}
+
+void
+VrToggleThirdPerson(void)
+{
+	LoadVrSettings();
+	SetViewMode(gViewMode == VR_VIEW_FIRST_PERSON ?
+		gThirdPersonStyle : (int)VR_VIEW_FIRST_PERSON);
+}
 #endif
 
 int
@@ -5191,6 +5306,12 @@ VrWristPanelEnabled(int panel)
 	LoadVrSettings();
 	if(panel < 0 || panel >= WRIST_PANEL_COUNT)
 		return false;
+#if MIAMIVR_STEAM_FRAME
+	// No tracked hands in third person, so nothing to wear a panel on: the
+	// flat interface carries the minimap and the readout instead.
+	if(gViewMode != VR_VIEW_FIRST_PERSON)
+		return false;
+#endif
 	return gWristPanelOn[panel];
 }
 
@@ -5278,6 +5399,12 @@ bool
 VrHudWeaponPanelEnabled(void)
 {
 	LoadVrSettings();
+#if MIAMIVR_STEAM_FRAME
+	// With the wrist ammo counter gone, the corner readout is the only place
+	// the round count is shown.
+	if(gViewMode != VR_VIEW_FIRST_PERSON)
+		return true;
+#endif
 	return gHudWeaponPanel;
 }
 
@@ -5292,6 +5419,12 @@ bool
 VrGameplayHudEnabled(void)
 {
 	LoadVrSettings();
+#if MIAMIVR_STEAM_FRAME
+	// The interface has to be there in third person whatever the first
+	// person preference says; nothing else carries it.
+	if(gViewMode != VR_VIEW_FIRST_PERSON)
+		return true;
+#endif
 	return gGameplayHudEnabled;
 }
 

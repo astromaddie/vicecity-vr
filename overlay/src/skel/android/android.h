@@ -69,6 +69,9 @@ struct PadInput
 	// "back" pulse (the hold is the recentre, handled before the game sees
 	// the pad; see android_main.cpp).
 	bool dpadUp, dpadDown, dpadLeft, dpadRight;
+	// The shoulder bumpers, left and right (previous / next weapon in third
+	// person; unbound in first person).
+	bool leftBumper, rightBumper;
 	bool viewBack;
 #endif
 };
@@ -188,6 +191,16 @@ float VrCinema3DDepth(void);
 // The 3D cinema depth for this frame: VrCinema3DDepth() while a cutscene is
 // on the theater screen, 0 for menus, loading, the intro and gameplay.
 float VrCinema3DDepthThisFrame(void);
+// Third person view (vr_settings.ini ViewMode): 0 first person, 1 the whole
+// game on the theater screen from the stock camera, 2 the stock chase camera
+// in stereo. A short press of View toggles between first person and the last
+// third person style chosen.
+int VrViewMode(void);
+bool VrThirdPersonScreen(void);
+bool VrThirdPersonShoulder(void);
+void VrToggleThirdPerson(void);
+// Mode 1 and gameplay is running: the stock camera is on the theater screen.
+bool VrScreenGameplayActive(void);
 #endif
 // Which camera a stereo cutscene is watched from: 0 the director's own,
 // 1 and up the staged actors. The player cycles it with R3.

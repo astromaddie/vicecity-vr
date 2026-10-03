@@ -3380,6 +3380,14 @@ bool
 IsQuestVehicleThirdPerson()
 {
 	LoadDrivingSettings();
+#if MIAMIVR_STEAM_FRAME
+	// THIRD: OVER SHOULDER puts every vehicle on the chase camera, whatever
+	// the per-kind settings below say; they are left as they were. On foot
+	// there is no vehicle to speak of, and the VEHICLE page keeps showing
+	// the stored setting it edits.
+	if(androidgame::VrThirdPersonShoulder() && FindPlayerVehicle() != nil)
+		return true;
+#endif
 	// The kind being driven decides, so a player who wants the chase
 	// camera on a bike still gets the cockpit in a car.
 	return gVehicleThirdPerson[VehicleKindFor(FindPlayerVehicle())];

@@ -241,6 +241,26 @@ static int gFoliageSoftness;
 // modes let the headset render it in stereo instead, so the scene has
 // depth and the player can look around inside the shot.
 static int gCutsceneMode;
+// The Frame adds 3D cinema: the same flat screen, but each eye gets its own
+// view of the director's shot, so the scene has depth behind the frame.
+// Three depth levels share the CUTSCENES row (the page has no room for a row
+// of its own); 0 and 1 keep their meaning, so a Quest settings file reads the
+// same here.
+enum
+{
+	VR_CUTSCENE_CINEMA = 0,
+	VR_CUTSCENE_STEREO = 1,
+	VR_CUTSCENE_CINEMA_3D_SUBTLE = 2,
+	VR_CUTSCENE_CINEMA_3D = 3,
+	VR_CUTSCENE_CINEMA_3D_DEEP = 4,
+};
+#if MIAMIVR_STEAM_FRAME
+// The order the row steps through.
+static const int kCutsceneModeOrder[] = {
+	VR_CUTSCENE_CINEMA, VR_CUTSCENE_CINEMA_3D_SUBTLE, VR_CUTSCENE_CINEMA_3D,
+	VR_CUTSCENE_CINEMA_3D_DEEP, VR_CUTSCENE_STEREO
+};
+#endif
 // Which camera this cutscene is being watched from: 0 is the director's
 // own, 1 and up are the staged actors in the order the scene put them
 // there. Picking the right one automatically never worked -- what the
@@ -1021,8 +1041,14 @@ LoadVrSettings(void)
 		"RenderDiagnostics", 0, ".\\vr_settings.ini") != 0 ? 1 : 0;
 	gFoliageSoftness = clamp((int)(int32)GetPrivateProfileIntA("VR",
 		"FoliageSoftness", 0, ".\\vr_settings.ini"), 0, 3);
+#if MIAMIVR_STEAM_FRAME
+	gCutsceneMode = clamp((int)(int32)GetPrivateProfileIntA("VR",
+		"CutsceneMode", VR_CUTSCENE_CINEMA_3D, ".\\vr_settings.ini"),
+		VR_CUTSCENE_CINEMA, VR_CUTSCENE_CINEMA_3D_DEEP);
+#else
 	gCutsceneMode = clamp((int)(int32)GetPrivateProfileIntA("VR",
 		"CutsceneMode", 0, ".\\vr_settings.ini"), 0, 1);
+#endif
 	// Remembered across launches so a build handed over for testing can
 	// come up already showing it. Off for everyone else.
 	QuestProfilerSetEnabled(GetPrivateProfileIntA("VR", "ShowProfiler",
@@ -2292,7 +2318,8 @@ VrDebugUpdate(const PadInput &in)
 	// the next camera, L3 keeps the one on screen for this scene. The
 	// scene name is the key, so the choice comes back the next time the
 	// same cutscene plays.
-	const bool cutsceneCameras = !gVrMenuVisible && gCutsceneMode != 0 &&
+	const bool cutsceneCameras = !gVrMenuVisible &&
+		gCutsceneMode == VR_CUTSCENE_STEREO &&
 		(CCutsceneMgr::IsRunning() || TheCamera.m_WideScreenOn);
 	if(cutsceneCameras){
 		// A scripted sequence has no name of its own, so every one of
@@ -3139,10 +3166,25 @@ VrDebugUpdate(const PadInput &in)
 				}
 				break;
 			case VR_LOCOMOTION_CUTSCENES:
+#if MIAMIVR_STEAM_FRAME
+			{
+				const int count = (int)(sizeof(kCutsceneModeOrder)/
+					sizeof(kCutsceneModeOrder[0]));
+				int index = 0;
+				while(index < count &&
+				      kCutsceneModeOrder[index] != gCutsceneMode)
+					index++;
+				index = (index%count+count+direction)%count;
+				gCutsceneMode = kCutsceneModeOrder[index];
+				SaveVrInteger("CutsceneMode", gCutsceneMode);
+				break;
+			}
+#else
 				gCutsceneMode = (gCutsceneMode+2+
 					(decreasePulse ? -1 : 1))%2;
 				SaveVrInteger("CutsceneMode", gCutsceneMode);
 				break;
+#endif
 			case VR_LOCOMOTION_HEAD_BOBBING:
 				gQuestHeadBobbing = !gQuestHeadBobbing;
 				SaveVrInteger("HeadBobbing", gQuestHeadBobbing);
@@ -4262,9 +4304,19 @@ DrawQuestLocomotionPage(void)
 		"SNAP TURN ANGLE  < %d DEG >", gQuestSnapTurnAngleDegrees);
 	snprintf(rows[VR_LOCOMOTION_HEAD_BOBBING], sizeof(rows[0]),
 		"WALKING HEAD BOB  < %s >", gQuestHeadBobbing ? "ON" : "OFF");
+#if MIAMIVR_STEAM_FRAME
+	snprintf(rows[VR_LOCOMOTION_CUTSCENES], sizeof(rows[0]),
+		"CUTSCENES  < %s >",
+		gCutsceneMode == VR_CUTSCENE_STEREO ? "STEREO  R3 CAMERA  L3 KEEP" :
+		gCutsceneMode == VR_CUTSCENE_CINEMA_3D_SUBTLE ? "CINEMA 3D  SUBTLE" :
+		gCutsceneMode == VR_CUTSCENE_CINEMA_3D ? "CINEMA 3D" :
+		gCutsceneMode == VR_CUTSCENE_CINEMA_3D_DEEP ? "CINEMA 3D  DEEP" :
+		"CINEMA SCREEN");
+#else
 	snprintf(rows[VR_LOCOMOTION_CUTSCENES], sizeof(rows[0]),
 		"CUTSCENES  < %s >",
 		gCutsceneMode ? "STEREO  R3 CAMERA  L3 KEEP" : "CINEMA SCREEN");
+#endif
 	snprintf(rows[VR_LOCOMOTION_REFRESH_RATE], sizeof(rows[0]),
 		"REFRESH RATE  < %d HZ >", gQuestRefreshRateHz);
 	strcpy(rows[VR_LOCOMOTION_RECENTER], "RECENTER VIEW");
@@ -4927,12 +4979,31 @@ VrCutsceneCamera(void)
 	return gCutsceneCamera;
 }
 
+// 1 when cutscenes are rendered immersively (STEREO), else 0: every cinema
+// mode, 3D or not, is the theater screen as far as the callers are concerned.
 int
 VrCutsceneMode(void)
 {
 	LoadVrSettings();
-	return gCutsceneMode;
+	return gCutsceneMode == VR_CUTSCENE_STEREO ? 1 : 0;
 }
+
+#if MIAMIVR_STEAM_FRAME
+// How deep the 3D cinema picture goes: the separation of the two images at
+// infinity, as a fraction of the viewer's IPD (0 = flat). Under 1 keeps the
+// eyes from diverging; the far background lands at screen distance / (1-k).
+float
+VrCinema3DDepth(void)
+{
+	LoadVrSettings();
+	switch(gCutsceneMode){
+	case VR_CUTSCENE_CINEMA_3D_SUBTLE: return 0.35f;
+	case VR_CUTSCENE_CINEMA_3D:        return 0.55f;
+	case VR_CUTSCENE_CINEMA_3D_DEEP:   return 0.75f;
+	}
+	return 0.0f;
+}
+#endif
 
 int
 VrFoliageSoftness(void)

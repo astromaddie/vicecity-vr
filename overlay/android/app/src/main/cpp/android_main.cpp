@@ -100,7 +100,7 @@ autoResetRenderScaleAfterGameInitialiseFailure(void)
 // proportions without another full-size render target.
 void
 makeTheaterMatrices(float viewProj[16], float im2dWorld[16],
-                    float *distanceOut)
+                    float *distanceOut, float im2dDistance = 2.0f)
 {
 	for(int i = 0; i < 16; i++){
 		viewProj[i] = 0.0f;
@@ -118,7 +118,10 @@ makeTheaterMatrices(float viewProj[16], float im2dWorld[16],
 	viewProj[11] = -1.0f;
 	viewProj[14] = -(farZ*nearZ)/(farZ-nearZ);
 
-	const float distance = 2.0f;
+	// The 2D layer's plane in camera space. Flat cinema puts it at 2 m; the
+	// 3D cinema puts it on the zero-parallax plane, so subtitles and the
+	// letterbox sit exactly on the screen.
+	const float distance = im2dDistance;
 	const float planeHeight = 2.0f*distance*tanHalfY;
 	const float planeWidth = planeHeight*aspect;
 	const float screenWidth = RsGlobal.width > 0 ? (float)RsGlobal.width : 1.0f;
@@ -132,6 +135,61 @@ makeTheaterMatrices(float viewProj[16], float im2dWorld[16],
 	im2dWorld[15] = 1.0f;
 	*distanceOut = distance;
 }
+
+#if MIAMIVR_STEAM_FRAME
+// 3D cinema. The director's camera is split into two parallel cameras, each
+// with an off-axis frustum, converged on a plane kCinemaConvergence metres in
+// front of the camera. That plane lands exactly on the theater screen; nearer
+// things come out of it a little, everything further sits behind it, like a
+// window. The camera separation is not the viewer's IPD: it is solved so that
+// the two images of something at infinity are depth*IPD apart on the screen,
+// which puts the far background at screen distance / (1 - depth) and never
+// asks the eyes to diverge (depth < 1). IPD comes from the runtime's eyes.
+static const float kCinemaConvergence = 1.5f;
+
+static void
+makeCinema3DMatrices(float viewProj[2][16], float im2dWorld[16],
+                     float *distanceOut, float depth, const float eyePos[2][3])
+{
+	float mono[16];
+	makeTheaterMatrices(mono, im2dWorld, distanceOut, kCinemaConvergence);
+
+	float ipd = 0.0f;
+	for(int axis = 0; axis < 3; axis++){
+		const float d = eyePos[1][axis] - eyePos[0][axis];
+		ipd += d*d;
+	}
+	ipd = sqrtf(ipd);
+	if(!(ipd > 0.045f && ipd < 0.085f))
+		ipd = 0.063f;    // no plausible pose (standby, synthetic head)
+
+	// The screen shows NDC x in [-1, 1] across its width, so an NDC disparity
+	// of delta is delta*width/2 metres there. At infinity the two images are
+	// sx*baseline/C apart in NDC.
+	const float sx = mono[0];
+	const float C = kCinemaConvergence;
+	const float baseline =
+		depth*ipd*2.0f*C/(sx*xrvk::kTheaterScreenWidth);
+
+	for(int eye = 0; eye < 2; eye++){
+		const float eyeX = (eye == 0 ? -0.5f : 0.5f)*baseline;
+		// x_ndc = sx*(x - eyeX)/(-z) + shift, with shift = sx*eyeX/C so the
+		// two eyes agree on the plane z = -C. In clip space, with w = -z:
+		// x_clip = sx*x - sx*eyeX - shift*z.
+		const float shift = sx*eyeX/C;
+		memcpy(viewProj[eye], mono, sizeof(mono));
+		viewProj[eye][8] = -shift;
+		viewProj[eye][12] = -sx*eyeX;
+	}
+
+	static float reportedDepth = -1.0f;
+	if(depth != reportedDepth){
+		reportedDepth = depth;
+		LOGI("[vr] cinema 3D: depth %.2f, ipd %.1f mm, camera baseline %.1f mm, "
+		     "zero parallax at %.2f m", depth, ipd*1000.0f, baseline*1000.0f, C);
+	}
+}
+#endif
 
 struct MenuTransitionTraceState
 {
@@ -404,11 +462,28 @@ renderGameFrame(VkImage image, VkImageView view, const float viewProj[2][16],
 	xrvk::setTheaterMode(theaterBefore);
 	if(theaterBefore){
 		float theaterViewProj[16], theaterIm2D[16], theaterDistance;
-		makeTheaterMatrices(theaterViewProj, theaterIm2D, &theaterDistance);
 		const float origin[3] = { 0.0f, 0.0f, 0.0f };
 		const float identityQuat[4] = { 0.0f, 0.0f, 0.0f, 1.0f };
+#if MIAMIVR_STEAM_FRAME
+		const float depth = androidgame::VrCinema3DDepthThisFrame();
+		xrvk::setTheaterStereo(depth > 0.0f);
+		if(depth > 0.0f){
+			float eyeViewProj[2][16];
+			makeCinema3DMatrices(eyeViewProj, theaterIm2D, &theaterDistance,
+			                     depth, eyePos);
+			rw::vulkan::setStereoViewProjection(eyeViewProj[0],
+			                                    eyeViewProj[1]);
+		}else{
+			makeTheaterMatrices(theaterViewProj, theaterIm2D,
+			                    &theaterDistance);
+			rw::vulkan::setStereoViewProjection(
+				theaterViewProj, theaterViewProj);
+		}
+#else
+		makeTheaterMatrices(theaterViewProj, theaterIm2D, &theaterDistance);
 		rw::vulkan::setStereoViewProjection(
 			theaterViewProj, theaterViewProj);
+#endif
 		rw::vulkan::setIm2DTransform(
 			theaterIm2D, theaterDistance, origin);
 		rw::vulkan::setHeadPose(origin, 0.0f, identityQuat);

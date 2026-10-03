@@ -7,7 +7,7 @@ kit's Quest build already uses the Khronos loader, Vulkan through
 build with a Gradle build type, `frame`, on top. The Quest builds are
 unchanged. What differs, and why, is in [VR_ARCHITECTURE.md](VR_ARCHITECTURE.md).
 
-Status: the APK builds; nothing has run on the Frame yet. See section 5.
+Status: it plays on the Frame (first wear, 2026-10-03). See section 5.
 
 ## 1. Build on a Mac (Apple Silicon) or Linux
 
@@ -91,6 +91,12 @@ Frame on Wi-Fi; over USB networking use `steamos@10.86.200.233`.
 The old both-stick-clicks recentre is off on the Frame. The stick clicks stay
 game actions.
 
+**Cutscenes** default to **CINEMA 3D**: the cinema screen keeps its frame, and
+the scene has depth behind it, like a 3D film. To change it, open the VR menu
+and go to LOCOMOTION > CUTSCENES. The row steps through CINEMA SCREEN (flat),
+CINEMA 3D SUBTLE, CINEMA 3D, CINEMA 3D DEEP, and STEREO (immersive, inside the
+shot).
+
 ## 4. Unattended testing (nothing worn)
 
 A headset on a desk reports `shouldRender=false`. In that state nothing draws
@@ -126,5 +132,6 @@ their game. Check first, for example with
 | Frame APK builds: `com.miamivr.quest.frame`, minSdk 30, headtracking not required, `focusaware` removed | host build (`aapt dump`) |
 | Frame bindings use only real component paths on the right hands, with unique action names | host test |
 | Lepton is API 30, Vulkan 1.1, no headtracking feature; SteamVR runtime manifest present | device, read-only |
-| Anything that runs on the Frame: install, session, rendering, input, audio, performance | **not run** |
-| Anything seen in the headset | **not worn** |
+| Installs and plays from the ViceCityVR Steam title; data and settings in `~/Documents/ViceCityVR` | **worn** (user report, 2026-10-03) |
+| CINEMA 3D cutscenes | host build only, **not worn** |
+| Individual controls, colours, performance | not yet reported |

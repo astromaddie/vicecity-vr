@@ -368,6 +368,10 @@ struct State
 	FrameRenderer frameRenderer = nullptr;
 	bool headPoseTrackedForFrame = false;
 	bool theaterMode = true;
+#if MIAMIVR_STEAM_FRAME
+	// 3D cinema: the theater screen shows each eye its own array layer.
+	bool theaterStereo = false;
+#endif
 	bool theaterAnchorValid = false;
 	XrSpace theaterSpace = XR_NULL_HANDLE;
 	XrPosef theaterPose = {};
@@ -3250,6 +3254,16 @@ setFrameRenderer(FrameRenderer renderer)
 	g.frameRenderer = renderer;
 }
 
+#if MIAMIVR_STEAM_FRAME
+void
+setTheaterStereo(bool enabled)
+{
+	if(enabled != g.theaterStereo)
+		LOGI("[vr] theater screen %s", enabled ? "3D (one layer per eye)" : "flat");
+	g.theaterStereo = enabled;
+}
+#endif
+
 void
 setTheaterMode(bool enabled)
 {
@@ -3616,8 +3630,9 @@ renderFrame(void)
 	XrCompositionLayerProjectionView projectionViews[2] = {};
 	XrCompositionLayerProjection layer = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerQuad theaterLayer = { XR_TYPE_COMPOSITION_LAYER_QUAD };
+	XrCompositionLayerQuad theaterLayerRight = { XR_TYPE_COMPOSITION_LAYER_QUAD };
 	XrCompositionLayerQuad debugLayer = { XR_TYPE_COMPOSITION_LAYER_QUAD };
-	const XrCompositionLayerBaseHeader *layers[2] = { nullptr, nullptr };
+	const XrCompositionLayerBaseHeader *layers[3] = { nullptr, nullptr, nullptr };
 	uint32_t layerCount = 0;
 
 	if((frameState.shouldRender || forceRender) &&
@@ -3751,11 +3766,24 @@ renderFrame(void)
 				// Keep the complete 16:9 frame comfortably inside the Quest
 				// binocular field of view. The old 3.2 m quad filled roughly
 				// 77 degrees horizontally at this two-metre distance.
-				theaterLayer.size.width = 2.56f;
-				theaterLayer.size.height = 1.44f;
+				theaterLayer.size.width = kTheaterScreenWidth;
+				theaterLayer.size.height = kTheaterScreenHeight;
 				layers[0] =
 					(const XrCompositionLayerBaseHeader *)&theaterLayer;
 				layerCount = 1;
+#if MIAMIVR_STEAM_FRAME
+				// 3D cinema: the same screen twice, one per eye, each showing
+				// that eye's layer. The renderer drew the two layers from
+				// two cameras converged on the screen plane.
+				if(g.theaterStereo){
+					theaterLayer.eyeVisibility = XR_EYE_VISIBILITY_LEFT;
+					theaterLayerRight = theaterLayer;
+					theaterLayerRight.eyeVisibility = XR_EYE_VISIBILITY_RIGHT;
+					theaterLayerRight.subImage.imageArrayIndex = 1;
+					layers[layerCount++] =
+						(const XrCompositionLayerBaseHeader *)&theaterLayerRight;
+				}
+#endif
 			}else{
 				for(int eye = 0; eye < 2; eye++){
 					projectionViews[eye] = {

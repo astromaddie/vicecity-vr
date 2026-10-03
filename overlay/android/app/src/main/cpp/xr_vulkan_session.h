@@ -190,6 +190,16 @@ void setFrameRenderer(FrameRenderer renderer);
 // zero as one shared image on a world-locked cinema quad.
 void setTheaterMode(bool enabled);
 
+// The theater screen's size in metres; it hangs 2 m in front of the head.
+constexpr float kTheaterScreenWidth = 2.56f;
+constexpr float kTheaterScreenHeight = 1.44f;
+
+#if MIAMIVR_STEAM_FRAME
+// 3D cinema: show each eye its own array layer on the theater screen instead
+// of layer 0 to both. Takes effect with the next submitted frame.
+void setTheaterStereo(bool enabled);
+#endif
+
 // Predicted display time of the frame currently being rendered, in
 // nanoseconds. Zero before the first frame. Vsync-quantised, which makes it
 // the right clock to drive game time from: wall-clock deltas jitter with

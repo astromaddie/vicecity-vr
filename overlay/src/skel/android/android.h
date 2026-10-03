@@ -183,6 +183,12 @@ int VrFoliageSoftness(void);
 // How a cutscene is presented: 0 the flat theater screen, 1 stereo from
 // the director camera.
 int VrCutsceneMode(void);
+#if MIAMIVR_STEAM_FRAME
+float VrCinema3DDepth(void);
+// The 3D cinema depth for this frame: VrCinema3DDepth() while a cutscene is
+// on the theater screen, 0 for menus, loading, the intro and gameplay.
+float VrCinema3DDepthThisFrame(void);
+#endif
 // Which camera a stereo cutscene is watched from: 0 the director's own,
 // 1 and up the staged actors. The player cycles it with R3.
 int VrCutsceneCamera(void);

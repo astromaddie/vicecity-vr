@@ -586,6 +586,25 @@ androidgame::VrShouldUseTheaterMode(void)
 		cutsceneOnScreen;
 }
 
+#if MIAMIVR_STEAM_FRAME
+float
+androidgame::VrCinema3DDepthThisFrame(void)
+{
+	// Only a cutscene's own camera gets depth. Menus, loading screens and the
+	// intro's world rebuild stay flat on the same screen.
+	const bool cutscene = CCutsceneMgr::IsCutsceneProcessing() ||
+		CCutsceneMgr::IsRunning() || TheCamera.m_WideScreenOn;
+	if(!cutscene || gGameState != GS_PLAYING_GAME ||
+	   FrontEndMenuManager.m_bGameNotLoaded ||
+	   FrontEndMenuManager.m_bMenuActive ||
+	   FrontEndMenuManager.m_bWantToRestart ||
+	   FrontEndMenuManager.m_bWantToLoad ||
+	   CGame::playingIntro || FindPlayerPed() == nil)
+		return 0.0f;
+	return androidgame::VrCinema3DDepth();
+}
+#endif
+
 // Camera 0 is the director's own. Camera 1 and up are the staged actors, in
 // the order the scene created them; the player steps through them with R3
 // and keeps one with L3. Choosing for them never worked -- which actor the

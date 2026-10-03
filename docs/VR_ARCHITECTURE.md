@@ -66,6 +66,7 @@ contains `Frame`, because `minSdk` cannot vary per build type.
 | HUD (Im2D) | Projected per eye onto a plane 2 m from the head inside the multiview pass |
 | Map, status, clock, ammo | Wrist panels rendered to small textures and placed on the arm |
 | Frontend menus, cutscenes | Theater mode: a 2.56 x 1.44 m quad layer, yaw-anchored at 2 m, reading array layer 0 |
+| Cutscenes, CINEMA 3D (Frame default) | The same screen, submitted twice: the left eye sees layer 0 and the right eye layer 1. The director camera is split into two parallel off-axis cameras converged 1.5 m ahead. The camera baseline is solved so the images at infinity are depth x IPD apart on the screen, with depth 0.35 / 0.55 / 0.75 for SUBTLE / default / DEEP. The background therefore sits at 3.1 / 4.4 / 8 m and never diverges. Subtitles and the letterbox sit on the zero-parallax plane. Menus, loading and the intro stay flat (`makeCinema3DMatrices` in `android_main.cpp`) |
 | VR menu and debug overlay | 1024x768 head-locked quad layer in VIEW space, source-alpha blended |
 | Stereo cutscenes | Staged cameras selectable per scene (R3 cycles, L3 keeps) |
 
@@ -99,12 +100,12 @@ The Frame controller is a split gamepad. Its bindings:
 | Frame APK builds; Frame strings only in the Frame library | host build |
 | Bindings: component paths, hands, unique names | host test |
 | Lepton facts in section 1 | device, read-only |
-| Install, loader finds SteamVR, Vulkan device from the runtime, session, swapchain | **not run** |
-| Game boots from `~/Documents/ViceCityVR` | **not run**. The Steam PC version (app 12110) was downloading on the Frame on 2026-10-03 |
+| Install from the Steam library title, game boots and plays, data in `~/Documents/ViceCityVR` | **worn**: the user reported "it works good" (2026-10-03, first session). The game wrote `vr_settings.ini` and its logs to the Documents folder |
+| CINEMA 3D cutscenes | host build, plus a numeric check of the perceived depths. **Not worn** |
 | Diagnostics (`vr-diag.ini`: force_render, synthetic head, eye dumps, `[vr-perf]`) | host build |
 | Fresh `build.sh` from the kit reproduces the dev tree byte-for-byte and builds both APKs | host build |
 | Stereo eye dumps at 0, 90 and 180 degrees of yaw | **not run** |
-| Steam-library launch, controllers, comfort, performance | **not worn** |
+| Individual controls (View recentre, D-pad, Index fallback), colour correctness, performance numbers | not reported on yet |
 
 ## 7. Open items
 

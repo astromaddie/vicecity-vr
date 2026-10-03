@@ -1,5 +1,9 @@
 #include "platform_android.h"
 #include "xr_vulkan_session.h"
+#if MIAMIVR_STEAM_FRAME
+#include "frame_diag.h"
+#include "sfvr/sfvr.h"
+#endif
 
 #include <android_native_app_glue.h>
 #include <android/log.h>
@@ -10,6 +14,8 @@
 #include <atomic>
 #include <thread>
 #include <unistd.h>
+#include <errno.h>
+#include <sys/stat.h>
 
 #ifndef MIAMIVR_BRINGUP
 #include "common.h"
@@ -294,6 +300,43 @@ StoreHudIm2D(const float transform[16], float distance, const float eye[3])
 	gHudIm2DValid = true;
 }
 
+#if MIAMIVR_STEAM_FRAME
+// The Steam Frame system layer (standard.md section 1), on sfvr's View timing:
+// a short View press is "back", holding it 1 s recentres and 3 s recentres
+// again (this port has no standing-height calibration), each with the system
+// buzz on both hands. A system recentre from the runtime does the same.
+// Returns true for one frame on a short press.
+static bool
+updateFrameSystemLayer(const xrvk::ControllerInput &controllers)
+{
+	static sfvr_view_button view;
+	static sfvr_view_config config;
+	static bool initialised;
+	if(!initialised){
+		sfvr_view_config_default(&config);
+		sfvr_view_reset(&view);
+		initialised = true;
+	}
+	// Button timing on the predicted display clock, like everything else.
+	const double now = (double)xrvk::getPredictedDisplayTimeNs()*1e-9;
+	const unsigned events = sfvr_view_update(&view, &config,
+		controllers.view ? 1 : 0, now);
+	const bool recentre = controllers.systemRecentre ||
+		(events & (SFVR_VIEW_RECENTRE | SFVR_VIEW_RECALIBRATE_HEIGHT)) != 0;
+	if(recentre){
+		LOGI("[vr] recentre (%s)", controllers.systemRecentre ? "system" :
+		     (events & SFVR_VIEW_RECALIBRATE_HEIGHT) ? "View hold 3 s" :
+		     "View hold 1 s");
+		androidgame::VrRecenterView();
+		const sfvr_haptic_pulse buzz = sfvr_haptic_default(SFVR_HAPTIC_SYSTEM);
+		for(int hand = 0; hand < 2; hand++)
+			xrvk::triggerHaptic(hand, buzz.amplitude, 0.0f,
+			                    buzz.seconds*1000.0f);
+	}
+	return (events & SFVR_VIEW_SHORT_PRESS) != 0;
+}
+#endif
+
 // handed over, steps the game inside it, and submits.
 void
 renderGameFrame(VkImage image, VkImageView view, const float viewProj[2][16],
@@ -322,6 +365,13 @@ renderGameFrame(VkImage image, VkImageView view, const float viewProj[2][16],
 	pad.menu = controllers.menu;
 	pad.leftStickClick = controllers.leftStickClick;
 	pad.rightStickClick = controllers.rightStickClick;
+#if MIAMIVR_STEAM_FRAME
+	pad.dpadUp = controllers.dpadUp;
+	pad.dpadDown = controllers.dpadDown;
+	pad.dpadLeft = controllers.dpadLeft;
+	pad.dpadRight = controllers.dpadRight;
+	pad.viewBack = updateFrameSystemLayer(controllers);
+#endif
 	for(int hand = 0; hand < 2; hand++){
 		for(int axis = 0; axis < 3; axis++){
 			pad.gripPose[hand].position[axis] =
@@ -985,6 +1035,28 @@ EndVrWristPanel(void)
 
 }  // namespace androidgame
 
+#if MIAMIVR_STEAM_FRAME
+static const char kFrameStorageRoot[] = "/sdcard/Documents/ViceCityVR";
+
+// Returns kFrameStorageRoot when it exists (or can be created) and accepts a
+// write, else nullptr.
+static const char *
+frameStorageRoot(void)
+{
+	mkdir("/sdcard/Documents", 0775);
+	if(mkdir(kFrameStorageRoot, 0775) != 0 && errno != EEXIST)
+		return nullptr;
+	char probe[sizeof(kFrameStorageRoot) + 32];
+	snprintf(probe, sizeof(probe), "%s/.write-probe", kFrameStorageRoot);
+	FILE *f = fopen(probe, "w");
+	if(f == nullptr)
+		return nullptr;
+	fclose(f);
+	unlink(probe);
+	return kFrameStorageRoot;
+}
+#endif
+
 void
 android_main(android_app *app)
 {
@@ -998,13 +1070,33 @@ android_main(android_app *app)
 	platform::redirectStdioToLog();
 	platform::startStallWatchdog();
 	platform::setNativeActivity(app->activity);
-	platform::setStorageRoot(app->activity->externalDataPath);
+	const char *storageRoot = app->activity->externalDataPath;
+#if MIAMIVR_STEAM_FRAME
+	// Steam Frame: Lepton wipes the app and its files when the container is
+	// reset, so the game data, saves and settings live in the headset's
+	// ~/Documents/ViceCityVR instead (Lepton maps /sdcard/Documents to it).
+	const char *frameRoot = frameStorageRoot();
+	if(frameRoot != nullptr)
+		storageRoot = frameRoot;
+	else
+		LOGW("frame: %s is not writable; using %s (wiped by a Lepton reset)",
+		     kFrameStorageRoot, storageRoot);
+#endif
+	platform::setStorageRoot(storageRoot);
+#if MIAMIVR_STEAM_FRAME
+	// vr-diag.ini lives in the storage root; read it once here, before the
+	// session exists, because dump_frame changes the swapchain's usage flags.
+	frame_diag::init();
+#endif
 #ifndef MIAMIVR_BRINGUP
-	androidgame::QuestProfilerSetLogDirectory(
-		app->activity->externalDataPath);
+	androidgame::QuestProfilerSetLogDirectory(storageRoot);
 #endif
 
+#if MIAMIVR_STEAM_FRAME
+	LOGI("Vice City VR (Steam Frame) starting");
+#else
 	LOGI("Vice City VR (Quest) starting");
+#endif
 
 	std::thread gameThread(gameThreadMain, app, &state);
 

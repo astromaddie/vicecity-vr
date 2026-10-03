@@ -68,3 +68,6 @@ tools/tests/*.inc
 tools/tests/checks-*/
 tools/tests/audit-*/
 tools/tests/audit-*
+
+# local device logs and dumps
+scratchpad/

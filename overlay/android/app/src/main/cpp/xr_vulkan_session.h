@@ -145,6 +145,13 @@ struct ControllerInput
 	bool leftStickClick, rightStickClick;
 	TrackedPose gripPose[2];
 	TrackedPose aimPose[2];
+#if MIAMIVR_STEAM_FRAME
+	// Steam Frame controller: left View, the left D-pad, and a system
+	// recentre (XrEventDataReferenceSpaceChangePending) latched until read.
+	bool view;
+	bool dpadUp, dpadDown, dpadLeft, dpadRight;
+	bool systemRecentre;
+#endif
 };
 
 void getInput(ControllerInput *out);

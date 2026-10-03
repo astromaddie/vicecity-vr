@@ -66,6 +66,10 @@ val hasReleaseSigning = releaseSigningKeys.all {
 val releaseBuildRequested = gradle.startParameter.taskNames.any {
 	it.contains("Release", ignoreCase = true)
 }
+// Valve Steam Frame build type (assembleFrame); see docs/STEAM_FRAME.md.
+val steamFrameBuildRequested = gradle.startParameter.taskNames.any {
+	it.contains("Frame", ignoreCase = true)
+}
 if (releaseBuildRequested && !questUnsignedRelease && !hasReleaseSigning) {
 	throw GradleException(
 		"Release signing is not configured. Copy " +
@@ -84,7 +88,9 @@ android {
 	defaultConfig {
 		applicationId = "com.miamivr.quest"
 		// Quest 3 / 3S ship Android 12L or newer. Nothing below that is a target.
-		minSdk = 32
+		// The Steam Frame's Android container (Lepton) is Android 11 / API 30,
+		// and minSdk cannot vary per build type, so Frame invocations lower it.
+		minSdk = if (steamFrameBuildRequested) 30 else 32
 		targetSdk = 35
 		versionCode = 522
 		versionName = "0.5.6"
@@ -166,6 +172,24 @@ android {
 					keyPassword = releaseSigningProperties.getProperty(
 						"keyPassword"
 					)
+				}
+			}
+		}
+		// Valve Steam Frame (Lepton, Android 11 on SteamVR): ./gradlew assembleFrame.
+		// Everything Frame-specific hangs off this build type so the Quest
+		// debug/release builds are untouched: CMake MIAMIVR_STEAM_FRAME, the
+		// manifest in src/frame, a separate application id, and game data in
+		// /sdcard/Documents/ViceCityVR, which survives Lepton resets.
+		create("frame") {
+			initWith(getByName("release"))
+			matchingFallbacks += listOf("release")
+			applicationIdSuffix = ".frame"
+			versionNameSuffix = "-frame"
+			// Sideloaded through adb and a devkit title; the debug key is enough.
+			signingConfig = signingConfigs.getByName("debug")
+			externalNativeBuild {
+				cmake {
+					arguments += listOf("-DMIAMIVR_STEAM_FRAME=ON")
 				}
 			}
 		}

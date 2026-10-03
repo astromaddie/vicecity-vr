@@ -129,6 +129,15 @@ existing headset; saves, settings and models are left alone.
 
 The source-only maintainer checks are in [RELEASING.md](RELEASING.md).
 
+## Valve Steam Frame
+
+A Frame build of the same port runs in the Frame's Android container
+(Lepton). It adds Frame controller bindings, a View-button recentre, and data
+kept in the headset's `~/Documents/ViceCityVR`. Build it on a Mac or Linux
+with `tools/steam_frame/build.sh`, then install it with
+`tools/steam_frame/deploy.sh`. See [docs/STEAM_FRAME.md](docs/STEAM_FRAME.md).
+The Frame build is new and has not yet been played in the headset.
+
 ## Current Quest build
 
 - Native arm64 Android application using OpenXR and Vulkan multiview.

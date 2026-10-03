@@ -16,6 +16,13 @@ option(MIAMIVR_BRINGUP "Build only the OpenXR/Vulkan bring-up target" OFF)
 # uniform and draw tint do not exist in player builds.
 option(MIAMIVR_DEV_TOOLS "Include developer-only diagnostics and test tools" OFF)
 
+# Valve Steam Frame build (Gradle build type "frame"): SteamVR's OpenXR runtime
+# inside Lepton, the Frame's Android 11 container. Off for every Quest build.
+option(MIAMIVR_STEAM_FRAME "Build for the Valve Steam Frame (Lepton)" OFF)
+if(MIAMIVR_STEAM_FRAME)
+	message(STATUS "miamivr: Steam Frame build")
+endif()
+
 # Optional AddressSanitizer instrumentation for native memory diagnostics.
 option(MIAMIVR_ASAN "Build with AddressSanitizer" OFF)
 if(MIAMIVR_ASAN)
@@ -124,7 +131,8 @@ add_library(librw STATIC
 add_dependencies(librw librw_shaders)
 target_include_directories(librw PUBLIC "${LIBRW_DIR}" "${LIBRW_DIR}/src")
 target_include_directories(librw PRIVATE "${LIBRW_SPIRV_DIR}")
-target_compile_definitions(librw PUBLIC RW_VULKAN MIAMIVR_DEV_TOOLS=$<BOOL:${MIAMIVR_DEV_TOOLS}>)
+target_compile_definitions(librw PUBLIC RW_VULKAN MIAMIVR_DEV_TOOLS=$<BOOL:${MIAMIVR_DEV_TOOLS}>
+	MIAMIVR_STEAM_FRAME=$<BOOL:${MIAMIVR_STEAM_FRAME}>)
 target_link_libraries(librw vulkan log)
 target_compile_options(librw PRIVATE
 	-Wno-unused-parameter
@@ -232,6 +240,20 @@ if(NOT MIAMIVR_BRINGUP)
 	list(APPEND GAME_INCLUDES "${CMAKE_CURRENT_SOURCE_DIR}")
 endif()
 
+# Steam Frame: the shared sfvr library (system layer, haptics, [vr-perf]),
+# vendored unedited in third_party/sfvr.
+if(MIAMIVR_STEAM_FRAME)
+	set(SFVR_DIR "${REVC_ROOT}/third_party/sfvr")
+	file(GLOB SFVR_SOURCES "${SFVR_DIR}/src/*.c")
+	add_library(sfvr STATIC ${SFVR_SOURCES})
+	target_include_directories(sfvr PUBLIC "${SFVR_DIR}/include")
+	set_target_properties(sfvr PROPERTIES C_STANDARD 99)
+	target_compile_options(sfvr PRIVATE -Wall -Wextra)
+
+	# vr-diag.ini parsing and BMP output for the unattended-test diagnostics.
+	list(APPEND MIAMIVR_SOURCES frame_diag.cpp)
+endif()
+
 add_library(miamivr SHARED ${MIAMIVR_SOURCES})
 add_dependencies(miamivr miamivr_shaders)
 
@@ -263,6 +285,10 @@ endif()
 
 if(MIAMIVR_BRINGUP)
 	target_compile_definitions(miamivr PRIVATE MIAMIVR_BRINGUP=1)
+endif()
+
+if(MIAMIVR_STEAM_FRAME)
+	target_link_libraries(miamivr sfvr)
 endif()
 
 target_link_libraries(miamivr

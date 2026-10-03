@@ -98,6 +98,13 @@ static const DebugGlyph gDebugGlyphs[] = {
 	{'Z',{0x1F,0x01,0x02,0x04,0x08,0x10,0x1F}}
 };
 
+// The headset named in menu text.
+#if MIAMIVR_STEAM_FRAME
+#define VR_PLATFORM_NAME "STEAM FRAME"
+#else
+#define VR_PLATFORM_NAME "QUEST"
+#endif
+
 static bool gDebugVisible;
 static uint8 gDebugPixels[VR_DEBUG_WIDTH*VR_DEBUG_HEIGHT*4];
 static uint8 gVrMenuPixels[VR_MENU_WIDTH*VR_MENU_HEIGHT*4];
@@ -2324,9 +2331,15 @@ VrDebugUpdate(const PadInput &in)
 	// chord's job. No grips in it: reaching for one picks a weapon up. The
 	// clicks are free for it because R3 and L3 hand their pad behaviour to
 	// CONTROLS, off by default.
+#if MIAMIVR_STEAM_FRAME
+	// The Frame recentres on a View hold (android_main.cpp). Stick clicks
+	// stay game actions there, so the chord is off.
+	const bool recenterShortcut = false;
+#else
 	const bool recenterShortcut =
 		!gVrMenuVisible && !VrShouldUseTheaterMode() && !cutsceneCameras &&
 		in.leftStickClick && in.rightStickClick;
+#endif
 	if(recenterShortcut && !gTouchRecenterShortcutDown)
 		androidgame::VrRecenterView();
 	gTouchRecenterShortcutDown = recenterShortcut;
@@ -3255,7 +3268,12 @@ VrDebugUpdate(const PadInput &in)
 			}
 		}
 
+#if MIAMIVR_STEAM_FRAME
+		// View's short press is the Frame's "back" (standard.md section 1).
+		const bool back = in.b || in.leftStickClick || in.viewBack;
+#else
 		const bool back = in.b || in.leftStickClick;
+#endif
 		if(back && !gVrMenuBackDown)
 			ReturnFromCurrentMenuPage();
 		gVrMenuBackDown = back;
@@ -3423,7 +3441,7 @@ DrawQuestSettingsPage(void)
 static void
 DrawQuestGraphicsPage(void)
 {
-	BeginFullVrMenuPage("GRAPHICS", "QUEST RENDERING AND PERFORMANCE");
+	BeginFullVrMenuPage("GRAPHICS", VR_PLATFORM_NAME " RENDERING AND PERFORMANCE");
 	xrvk::RenderScaleStatus scaleStatus = {};
 	const bool scaleStatusValid = xrvk::getRenderScaleStatus(&scaleStatus);
 	char rows[VR_GRAPHICS_ITEM_COUNT][112];
@@ -3912,7 +3930,7 @@ DrawQuestModelAssetsPage(void)
 		DrawVrMenuText("USE CLASSIC VEHICLES OR REDUCE 300% TRAFFIC IF FPS DROPS",
 			VR_MENU_WIDTH/2, 660, 2, 255, 155, 105);
 	}else
-		DrawVrMenuText("CLASSIC VEGETATION IS DEFAULT FOR QUEST PERFORMANCE",
+		DrawVrMenuText("CLASSIC VEGETATION IS DEFAULT FOR " VR_PLATFORM_NAME " PERFORMANCE",
 			VR_MENU_WIDTH/2, 650, 2, 245, 205, 90);
 }
 
@@ -4510,7 +4528,7 @@ DrawQuestAboutPage(void)
 		"CHOOSE IMMERSIVE DRIVING IN VEHICLE SETTINGS",
 		"CALIBRATE WEAPONS IF A MODEL OR GRIP IS MISALIGNED",
 		"MODEL ASSETS CAN MIX CLASSIC AND MODERN CONTENT",
-		"CLASSIC VEGETATION IS RECOMMENDED FOR QUEST PERFORMANCE",
+		"CLASSIC VEGETATION IS RECOMMENDED FOR " VR_PLATFORM_NAME " PERFORMANCE",
 		"MODERN VEHICLES + HIGH TRAFFIC CAN HEAVILY LOAD THE GPU",
 		"AUTHORED CULLING HELPS PERFORMANCE BUT MAY SHOW RARE ARTIFACTS",
 		"IF EYES DISAGREE: GRAPHICS > OCCLUSION > STEREO SAFE OR OFF",

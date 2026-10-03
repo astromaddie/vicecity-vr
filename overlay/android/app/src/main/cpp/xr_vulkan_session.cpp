@@ -2,6 +2,10 @@
 #include "platform_android.h"
 // For the game camera's view window, which the Im2D plane must match.
 #include "android.h"
+#if MIAMIVR_STEAM_FRAME
+#include "frame_diag.h"
+#include "sfvr/sfvr.h"
+#endif
 
 #include <android_native_app_glue.h>
 #include <vulkan/vulkan.h>
@@ -270,6 +274,10 @@ struct State
 	XrTime lastCompactDebugUploadTime = 0;
 	XrSwapchain swapchain = XR_NULL_HANDLE;
 	int64_t swapchainFormat = 0;
+	// Format of the views and render pass that write the eye images. The
+	// same as swapchainFormat, except on the Frame with an sRGB swapchain
+	// (see createSwapchain).
+	int64_t swapchainViewFormat = 0;
 	uint32_t renderWidth = 0;
 	uint32_t renderHeight = 0;
 	int renderScaleRequestedPercent = 100;
@@ -399,7 +407,26 @@ struct State
 	XrAction xAction = XR_NULL_HANDLE;
 	XrAction yAction = XR_NULL_HANDLE;
 	XrAction menuAction = XR_NULL_HANDLE;
+#if MIAMIVR_STEAM_FRAME
+	// Steam Frame controller: left View and the left D-pad.
+	bool hasFrameControllerExt = false;
+	XrAction viewAction = XR_NULL_HANDLE;
+	XrAction dpadAction[4] = { XR_NULL_HANDLE, XR_NULL_HANDLE,
+	                           XR_NULL_HANDLE, XR_NULL_HANDLE };  // up down left right
+#endif
 	ControllerInput input = {};
+#if MIAMIVR_STEAM_FRAME
+	// Unattended-test diagnostics (vr-diag.ini); see frame_diag.h.
+	// The swapchain was created with TRANSFER_SRC, which dump_frame needs.
+	bool swapchainTransferSrc = false;
+	// What this frame's runtime said and which head it drew with, for the
+	// dump's state file.
+	bool diagShouldRender = false;
+	bool diagSyntheticHead = false;
+	// Last fov the runtime reported plausibly, reused by the synthetic head.
+	XrFovf diagLastValidFov[2] = {};
+	bool diagLastValidFovSet = false;
+#endif
 };
 
 State g;
@@ -529,6 +556,12 @@ applyAndroidThreadSettings(const char *reason)
 	return g.applicationMainThreadRegistered;
 }
 
+#if MIAMIVR_STEAM_FRAME
+// Valve's controller extension; newer than the loader's headers.
+static const char kFrameControllerExtension[] =
+	"XR_VALVE_frame_controller_interaction";
+#endif
+
 bool
 createInstance(android_app *app)
 {
@@ -571,6 +604,13 @@ createInstance(android_app *app)
 		has(XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME);
 	if(g.hasAndroidThreadSettingsExt)
 		enabled.push_back(XR_KHR_ANDROID_THREAD_SETTINGS_EXTENSION_NAME);
+#if MIAMIVR_STEAM_FRAME
+	g.hasFrameControllerExt = has(kFrameControllerExtension);
+	if(g.hasFrameControllerExt)
+		enabled.push_back(kFrameControllerExtension);
+	LOGI("[vr] %s %s", kFrameControllerExtension,
+	     g.hasFrameControllerExt ? "enabled" : "not advertised");
+#endif
 	XrInstanceCreateInfoAndroidKHR androidInfo = { XR_TYPE_INSTANCE_CREATE_INFO_ANDROID_KHR };
 	androidInfo.applicationVM = app->activity->vm;
 	androidInfo.applicationActivity = app->activity->clazz;
@@ -583,9 +623,22 @@ createInstance(android_app *app)
 	info.applicationInfo.applicationVersion = 1;
 	strcpy(info.applicationInfo.engineName, "reVC");
 	info.applicationInfo.engineVersion = 1;
+#if MIAMIVR_STEAM_FRAME
+	// SteamVR on the Frame: request 1.0, as every port proven there does. No
+	// OpenXR 1.1 core function is used, and 1.1 is tried if 1.0 is refused.
+	info.applicationInfo.apiVersion = XR_API_VERSION_1_0;
+	XrResult instanceResult = xrCreateInstance(&info, &g.instance);
+	if(instanceResult == XR_ERROR_API_VERSION_UNSUPPORTED){
+		LOGW("[vr] OpenXR 1.0 refused; retrying with 1.1");
+		info.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
+		instanceResult = xrCreateInstance(&info, &g.instance);
+	}
+	XR_CHECK(instanceResult, "xrCreateInstance");
+#else
 	info.applicationInfo.apiVersion = XR_CURRENT_API_VERSION;
 
 	XR_CHECK(xrCreateInstance(&info, &g.instance), "xrCreateInstance");
+#endif
 	if(g.hasRefreshRateExt){
 		const XrResult enumerateResult = xrGetInstanceProcAddr(
 			g.instance, "xrEnumerateDisplayRefreshRatesFB",
@@ -940,6 +993,17 @@ createActions(void)
 	g.menuAction = makeAction("menu", "Menu", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
 	g.hapticAction = makeAction("haptic", "Haptic",
 	                            XR_ACTION_TYPE_VIBRATION_OUTPUT, true);
+#if MIAMIVR_STEAM_FRAME
+	g.viewAction = makeAction("view", "View", XR_ACTION_TYPE_BOOLEAN_INPUT, false);
+	g.dpadAction[0] = makeAction("dpadup", "D-pad Up",
+	                             XR_ACTION_TYPE_BOOLEAN_INPUT, false);
+	g.dpadAction[1] = makeAction("dpaddown", "D-pad Down",
+	                             XR_ACTION_TYPE_BOOLEAN_INPUT, false);
+	g.dpadAction[2] = makeAction("dpadleft", "D-pad Left",
+	                             XR_ACTION_TYPE_BOOLEAN_INPUT, false);
+	g.dpadAction[3] = makeAction("dpadright", "D-pad Right",
+	                             XR_ACTION_TYPE_BOOLEAN_INPUT, false);
+#endif
 
 	struct Binding { XrAction action; const char *path; };
 	const Binding bindings[] = {
@@ -966,6 +1030,105 @@ createActions(void)
 		{ g.menuAction,       "/user/hand/left/input/menu/click" },
 	};
 
+#if MIAMIVR_STEAM_FRAME
+	// Steam Frame first, then Index, then the Quest Touch map above as the
+	// last fallback. Each profile is suggested on its own, so one the runtime
+	// refuses cannot take the others down with it. The Frame is a split
+	// gamepad: A B X Y and Menu on the right, View and the D-pad on the left.
+	// X and Y keep their names (the game's prompts and the CONTROLS page say
+	// X and Y); only their hand changes from the Quest layout.
+	const Binding frameBindings[] = {
+		{ g.gripPoseAction,   "/user/hand/left/input/grip/pose" },
+		{ g.gripPoseAction,   "/user/hand/right/input/grip/pose" },
+		{ g.aimPoseAction,    "/user/hand/left/input/aim/pose" },
+		{ g.aimPoseAction,    "/user/hand/right/input/aim/pose" },
+		{ g.hapticAction,     "/user/hand/left/output/haptic" },
+		{ g.hapticAction,     "/user/hand/right/output/haptic" },
+		{ g.thumbstickAction, "/user/hand/left/input/thumbstick" },
+		{ g.thumbstickAction, "/user/hand/right/input/thumbstick" },
+		{ g.triggerAction,    "/user/hand/left/input/trigger/value" },
+		{ g.triggerAction,    "/user/hand/right/input/trigger/value" },
+		{ g.squeezeAction,    "/user/hand/left/input/squeeze/value" },
+		{ g.squeezeAction,    "/user/hand/right/input/squeeze/value" },
+		{ g.thumbClickAction, "/user/hand/left/input/thumbstick/click" },
+		{ g.thumbClickAction, "/user/hand/right/input/thumbstick/click" },
+		{ g.aAction,          "/user/hand/right/input/a/click" },
+		{ g.bAction,          "/user/hand/right/input/b/click" },
+		{ g.xAction,          "/user/hand/right/input/x/click" },
+		{ g.yAction,          "/user/hand/right/input/y/click" },
+		{ g.menuAction,       "/user/hand/right/input/menu/click" },
+		{ g.viewAction,       "/user/hand/left/input/view/click" },
+		{ g.dpadAction[0],    "/user/hand/left/input/dpad_up/click" },
+		{ g.dpadAction[1],    "/user/hand/left/input/dpad_down/click" },
+		{ g.dpadAction[2],    "/user/hand/left/input/dpad_left/click" },
+		{ g.dpadAction[3],    "/user/hand/left/input/dpad_right/click" },
+	};
+	// Index has A and B on each hand and no Menu or View: left B is Menu
+	// (Start), left A is View (back, hold to recentre). X and Y are not
+	// reachable on Index except through the CONTROLS remapping page.
+	const Binding indexBindings[] = {
+		{ g.gripPoseAction,   "/user/hand/left/input/grip/pose" },
+		{ g.gripPoseAction,   "/user/hand/right/input/grip/pose" },
+		{ g.aimPoseAction,    "/user/hand/left/input/aim/pose" },
+		{ g.aimPoseAction,    "/user/hand/right/input/aim/pose" },
+		{ g.hapticAction,     "/user/hand/left/output/haptic" },
+		{ g.hapticAction,     "/user/hand/right/output/haptic" },
+		{ g.thumbstickAction, "/user/hand/left/input/thumbstick" },
+		{ g.thumbstickAction, "/user/hand/right/input/thumbstick" },
+		{ g.triggerAction,    "/user/hand/left/input/trigger/value" },
+		{ g.triggerAction,    "/user/hand/right/input/trigger/value" },
+		{ g.squeezeAction,    "/user/hand/left/input/squeeze/value" },
+		{ g.squeezeAction,    "/user/hand/right/input/squeeze/value" },
+		{ g.thumbClickAction, "/user/hand/left/input/thumbstick/click" },
+		{ g.thumbClickAction, "/user/hand/right/input/thumbstick/click" },
+		{ g.aAction,          "/user/hand/right/input/a/click" },
+		{ g.bAction,          "/user/hand/right/input/b/click" },
+		{ g.menuAction,       "/user/hand/left/input/b/click" },
+		{ g.viewAction,       "/user/hand/left/input/a/click" },
+	};
+	struct Profile { const char *path; const Binding *bindings; size_t count; };
+	const Profile profiles[] = {
+		{ "/interaction_profiles/valve/frame_controller_valve",
+		  frameBindings, sizeof(frameBindings)/sizeof(frameBindings[0]) },
+		{ "/interaction_profiles/valve/index_controller",
+		  indexBindings, sizeof(indexBindings)/sizeof(indexBindings[0]) },
+		{ "/interaction_profiles/oculus/touch_controller",
+		  bindings, sizeof(bindings)/sizeof(bindings[0]) },
+	};
+	size_t suggestedProfiles = 0;
+	std::vector<XrActionSuggestedBinding> suggested;
+	for(const Profile &p : profiles){
+		if(p.bindings == frameBindings && !g.hasFrameControllerExt){
+			LOGW("[vr] %s not advertised: no Steam Frame profile suggested",
+			     kFrameControllerExtension);
+			continue;
+		}
+		suggested.clear();
+		for(size_t i = 0; i < p.count; i++){
+			XrPath path = XR_NULL_PATH;
+			if(XR_FAILED(xrStringToPath(g.instance, p.bindings[i].path, &path)))
+				continue;
+			suggested.push_back({ p.bindings[i].action, path });
+		}
+		XrPath profile = XR_NULL_PATH;
+		xrStringToPath(g.instance, p.path, &profile);
+		XrInteractionProfileSuggestedBinding suggestion = {
+			XR_TYPE_INTERACTION_PROFILE_SUGGESTED_BINDING };
+		suggestion.interactionProfile = profile;
+		suggestion.countSuggestedBindings = (uint32_t)suggested.size();
+		suggestion.suggestedBindings = suggested.data();
+		const XrResult result =
+			xrSuggestInteractionProfileBindings(g.instance, &suggestion);
+		LOGI("[vr] xrSuggestInteractionProfileBindings %s: %zu bindings, result %d",
+		     p.path, suggested.size(), (int)result);
+		if(XR_SUCCEEDED(result))
+			suggestedProfiles++;
+	}
+	if(suggestedProfiles == 0){
+		LOGE("[vr] no interaction profile accepted; the game gets no input");
+		return false;
+	}
+#else
 	std::vector<XrActionSuggestedBinding> suggested;
 	for(const Binding &binding : bindings){
 		XrPath path = XR_NULL_PATH;
@@ -984,6 +1147,7 @@ createActions(void)
 	suggestion.suggestedBindings = suggested.data();
 	XR_CHECK(xrSuggestInteractionProfileBindings(g.instance, &suggestion),
 	         "xrSuggestInteractionProfileBindings");
+#endif
 
 	XrSessionActionSetsAttachInfo attachInfo = {
 		XR_TYPE_SESSION_ACTION_SETS_ATTACH_INFO };
@@ -1054,8 +1218,16 @@ readStick(int hand, float *outX, float *outY)
 void
 syncInput(void)
 {
-	if(g.actionSet == XR_NULL_HANDLE || g.sessionState != XR_SESSION_STATE_FOCUSED)
+	if(g.actionSet == XR_NULL_HANDLE || g.sessionState != XR_SESSION_STATE_FOCUSED){
+#if MIAMIVR_STEAM_FRAME
+		// Focus lost: release the system-layer inputs rather than leave them
+		// held, so a View hold cannot complete while the game is paused.
+		g.input.view = false;
+		g.input.dpadUp = g.input.dpadDown = false;
+		g.input.dpadLeft = g.input.dpadRight = false;
+#endif
 		return;
+	}
 
 	XrActiveActionSet active = { g.actionSet, XR_NULL_PATH };
 	XrActionsSyncInfo syncInfo = { XR_TYPE_ACTIONS_SYNC_INFO };
@@ -1077,6 +1249,13 @@ syncInput(void)
 	g.input.x = readBool(g.xAction, -1);
 	g.input.y = readBool(g.yAction, -1);
 	g.input.menu = readBool(g.menuAction, -1);
+#if MIAMIVR_STEAM_FRAME
+	g.input.view = readBool(g.viewAction, -1);
+	g.input.dpadUp = readBool(g.dpadAction[0], -1);
+	g.input.dpadDown = readBool(g.dpadAction[1], -1);
+	g.input.dpadLeft = readBool(g.dpadAction[2], -1);
+	g.input.dpadRight = readBool(g.dpadAction[3], -1);
+#endif
 }
 
 void
@@ -1275,12 +1454,42 @@ createSwapchain(void)
 		LOGE("no supported swapchain format");
 		return false;
 	}
+	g.swapchainViewFormat = g.swapchainFormat;
+#if MIAMIVR_STEAM_FRAME
+	// SteamVR on the Frame offers sRGB swapchains only. The post-FX resolve
+	// writes colour that is already gamma-encoded (the game's colours are
+	// sRGB values, and nothing here linearises them), so writing it through
+	// an sRGB view would encode it a second time and wash the picture out.
+	// Render through the UNORM view of the same bytes instead; the compositor
+	// still decodes the image as sRGB, which is what the bytes are.
+	bool mutableSrgb = false;
+	if(g.swapchainFormat == VK_FORMAT_R8G8B8A8_SRGB){
+		g.swapchainViewFormat = VK_FORMAT_R8G8B8A8_UNORM;
+		mutableSrgb = true;
+	}else if(g.swapchainFormat == VK_FORMAT_B8G8R8A8_SRGB){
+		g.swapchainViewFormat = VK_FORMAT_B8G8R8A8_UNORM;
+		mutableSrgb = true;
+	}
+	LOGI("[vr] eye swapchain format %lld, rendered through format %lld%s",
+	     (long long)g.swapchainFormat, (long long)g.swapchainViewFormat,
+	     mutableSrgb ? " (sRGB image, UNORM view)" : "");
+#endif
 
 	// One swapchain with two array layers, not two swapchains. Multiview reads
 	// gl_ViewIndex to pick the layer, so both eyes come out of a single pass.
 	XrSwapchainCreateInfo info = { XR_TYPE_SWAPCHAIN_CREATE_INFO };
 	info.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT |
 	                  XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+#if MIAMIVR_STEAM_FRAME
+	// dump_frame reads the image back with vkCmdCopyImageToBuffer, which needs
+	// TRANSFER_SRC. Ask for it only when a dump was requested so normal runs
+	// keep the runtime's cheapest allocation.
+	if(frame_diag::config().dumpFrame > 0)
+		info.usageFlags |= XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT;
+	// The UNORM view needs an image created mutable-format.
+	if(mutableSrgb)
+		info.usageFlags |= XR_SWAPCHAIN_USAGE_MUTABLE_FORMAT_BIT;
+#endif
 	info.format = g.swapchainFormat;
 	info.sampleCount = 1;
 	info.faceCount = 1;
@@ -1342,9 +1551,25 @@ createSwapchain(void)
 		info.width = candidateWidth;
 		info.height = candidateHeight;
 		XrSwapchain candidateSwapchain = XR_NULL_HANDLE;
-		const XrResult createResult =
+		XrResult createResult =
 			xrCreateSwapchain(g.session, &info, &candidateSwapchain);
+#if MIAMIVR_STEAM_FRAME
+		if(XR_FAILED(createResult) &&
+		   (info.usageFlags & XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT) != 0){
+			// A runtime that refuses TRANSFER_SRC must not cost the render
+			// scale: drop the dump rather than stepping down a preset.
+			LOGW("[vr-dump] swapchain with TRANSFER_SRC failed (%d); "
+			     "dump_frame disabled", (int)createResult);
+			info.usageFlags &= ~XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT;
+			createResult =
+				xrCreateSwapchain(g.session, &info, &candidateSwapchain);
+		}
+#endif
 		if(XR_SUCCEEDED(createResult)){
+#if MIAMIVR_STEAM_FRAME
+			g.swapchainTransferSrc =
+				(info.usageFlags & XR_SWAPCHAIN_USAGE_TRANSFER_SRC_BIT) != 0;
+#endif
 			g.swapchain = candidateSwapchain;
 			g.renderWidth = candidateWidth;
 			g.renderHeight = candidateHeight;
@@ -1533,7 +1758,7 @@ bool
 createRenderPass(void)
 {
 	VkAttachmentDescription attachments[2] = {};
-	attachments[0].format = (VkFormat)g.swapchainFormat;
+	attachments[0].format = (VkFormat)g.swapchainViewFormat;
 	attachments[0].samples = VK_SAMPLE_COUNT_1_BIT;
 	attachments[0].loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
 	attachments[0].storeOp = VK_ATTACHMENT_STORE_OP_STORE;
@@ -1737,7 +1962,7 @@ createSwapchainImageViews(void)
 		VkImageViewCreateInfo viewInfo = { VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO };
 		viewInfo.image = image.image;
 		viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D_ARRAY;
-		viewInfo.format = (VkFormat)g.swapchainFormat;
+		viewInfo.format = (VkFormat)g.swapchainViewFormat;
 		viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 		viewInfo.subresourceRange.levelCount = 1;
 		viewInfo.subresourceRange.layerCount = 2;
@@ -1860,6 +2085,366 @@ drawScene(VkCommandBuffer commandBuffer)
 	}
 }
 
+#if MIAMIVR_STEAM_FRAME
+// ---------------------------------------------------------------------------
+// Steam Frame unattended-test diagnostics (standard.md section 8): synthetic
+// head, swapchain dump, [vr-perf]. The vr-diag.ini side is in frame_diag.
+// ---------------------------------------------------------------------------
+
+long long
+diagNowNs(void)
+{
+	struct timespec now;
+	clock_gettime(CLOCK_MONOTONIC, &now);
+	return (long long)now.tv_sec*1000000000LL + now.tv_nsec;
+}
+
+const char *
+diagSessionStateName(XrSessionState state)
+{
+	switch(state){
+	case XR_SESSION_STATE_IDLE: return "IDLE";
+	case XR_SESSION_STATE_READY: return "READY";
+	case XR_SESSION_STATE_SYNCHRONIZED: return "SYNCHRONIZED";
+	case XR_SESSION_STATE_VISIBLE: return "VISIBLE";
+	case XR_SESSION_STATE_FOCUSED: return "FOCUSED";
+	case XR_SESSION_STATE_STOPPING: return "STOPPING";
+	case XR_SESSION_STATE_LOSS_PENDING: return "LOSS_PENDING";
+	case XR_SESSION_STATE_EXITING: return "EXITING";
+	default: return "UNKNOWN";
+	}
+}
+
+// [vr-perf] is always on in the Frame build rather than gated by vr-diag.ini
+// `timing=1`: it is one log line per 10 s and one clock read per frame, and the
+// standard wants it available on every run without touching the config. The
+// timing key is still recognised (and logged) so a shared ini keeps working.
+//
+// Stages are chosen not to overlap, so the line's cpu= is the whole renderFrame
+// CPU time after xrWaitFrame returns: "xr" is that total minus the game
+// renderer callback, "game" is the callback (sim and draw submission, since the
+// game steps inside it). xrWaitFrame is left out on purpose: it is the pacing
+// block, not work. eye= is not measured (zeros) and gpu= is passed as unknown.
+struct PerfState
+{
+	sfvr_perf perf;
+	bool initialised = false;
+	// Callback time of the frame in progress, filled in by renderLayer.
+	float gameMs = 0.0f;
+	long long lastDisplayTime = 0;
+	// Smallest predicted-display-time step seen, the period when the runtime
+	// reports none.
+	long long smallestStep = 0;
+};
+PerfState gPerf;
+
+double
+diagNowSeconds(void)
+{
+	return (double)diagNowNs()*1e-9;
+}
+
+void
+perfPoll(void)
+{
+	if(!gPerf.initialised){
+		static const char *const stages[] = { "xr", "game" };
+		sfvr_perf_init(&gPerf.perf, SFVR_PERF_DEFAULT_WINDOW_S, stages, 2);
+		gPerf.initialised = true;
+	}
+	char line[256];
+	if(sfvr_perf_poll(&gPerf.perf, diagNowSeconds(), line, sizeof(line)))
+		LOGI("%s", line);
+}
+
+void
+perfAddFrame(long long frameStartNs, XrTime displayTime, XrDuration period)
+{
+	const long long step = gPerf.lastDisplayTime != 0 ?
+		(long long)displayTime - gPerf.lastDisplayTime : 0;
+	if(step > 0 && (gPerf.smallestStep == 0 || step < gPerf.smallestStep))
+		gPerf.smallestStep = step;
+	const long long reference = period > 0 ? (long long)period :
+		gPerf.smallestStep;
+	// A frame whose display time jumped by more than 1.5 periods means at
+	// least one display frame went by without one of ours.
+	const bool missed = step > 0 && reference > 0 &&
+		(double)step > 1.5*(double)reference;
+	gPerf.lastDisplayTime = (long long)displayTime;
+
+	const float totalMs = (float)((diagNowNs() - frameStartNs)*1e-6);
+	const float stageMs[2] = { totalMs > gPerf.gameMs ?
+		totalMs - gPerf.gameMs : 0.0f, gPerf.gameMs };
+	sfvr_perf_add_frame(&gPerf.perf, diagNowSeconds(), missed ? 1 : 0, stageMs,
+	                    nullptr, -1.0f);
+}
+
+bool
+diagFovPlausible(const XrFovf &fov)
+{
+	const float limit = 1.57f;
+	return fov.angleRight > fov.angleLeft && fov.angleUp > fov.angleDown &&
+	       fov.angleLeft > -limit && fov.angleRight < limit &&
+	       fov.angleDown > -limit && fov.angleUp < limit;
+}
+
+void
+diagCacheFov(const XrView views[2])
+{
+	if(!diagFovPlausible(views[0].fov) || !diagFovPlausible(views[1].fov))
+		return;
+	g.diagLastValidFov[0] = views[0].fov;
+	g.diagLastValidFov[1] = views[1].fov;
+	g.diagLastValidFovSet = true;
+}
+
+// Both eyes 1.6 m up in the reference space, a head-width apart, looking along
+// the yaw direction. Yaw is about +Y and positive turns left, the OpenXR
+// convention (a right-handed rotation). The eye offset rotates with the head so
+// the baseline stays across the view direction; at yaw 0 the eyes sit at
+// x = -0.032 and +0.032.
+void
+diagMakeSyntheticViews(XrView views[2], float yawDegrees)
+{
+	const float yaw = yawDegrees*(3.14159265f/180.0f);
+	const float half = yaw*0.5f;
+	const float rightX = cosf(yaw);
+	const float rightZ = -sinf(yaw);
+	for(int eye = 0; eye < 2; eye++){
+		const float side = eye == 0 ? -0.032f : 0.032f;
+		views[eye].pose = {};
+		views[eye].pose.orientation.y = sinf(half);
+		views[eye].pose.orientation.w = cosf(half);
+		views[eye].pose.position.x = side*rightX;
+		views[eye].pose.position.y = 1.6f;
+		views[eye].pose.position.z = side*rightZ;
+		if(g.diagLastValidFovSet){
+			views[eye].fov = g.diagLastValidFov[eye];
+		}else{
+			const float quarterPi = 0.78539816f;
+			views[eye].fov.angleLeft = -quarterPi;
+			views[eye].fov.angleRight = quarterPi;
+			views[eye].fov.angleUp = quarterPi;
+			views[eye].fov.angleDown = -quarterPi;
+		}
+	}
+}
+
+// Reads the two array layers of the swapchain image back and writes
+// vr-eye0.bmp, vr-eye1.bmp, vr-hud.bmp (when the overlay is up) and
+// vr-state.txt under <root>/vr-dumps.
+//
+// Layout: librw's resolve pass (postFxRenderPass, destinations[0] in
+// vkdevice.cpp) writes the swapchain image with initialLayout UNDEFINED and
+// finalLayout COLOR_ATTACHMENT_OPTIMAL, and nothing after it changes that;
+// OpenXR also requires COLOR_ATTACHMENT_OPTIMAL at xrReleaseSwapchainImage. So
+// this barriers COLOR_ATTACHMENT_OPTIMAL -> TRANSFER_SRC_OPTIMAL, copies, and
+// barriers back. librw submitted its work on g.queue, the same queue used
+// here, so queue order plus a full-pipeline barrier covers its writes;
+// vkQueueWaitIdle then makes the result CPU-readable. It stalls once.
+void
+diagDumpSwapchain(uint32_t imageIndex, int frameNumber)
+{
+	if(!g.swapchainTransferSrc){
+		LOGW("[vr-dump] swapchain has no TRANSFER_SRC usage; nothing dumped");
+		return;
+	}
+	bool bgra = false;
+	switch((VkFormat)g.swapchainFormat){
+	case VK_FORMAT_R8G8B8A8_UNORM:
+	case VK_FORMAT_R8G8B8A8_SRGB:
+		break;
+	case VK_FORMAT_B8G8R8A8_UNORM:
+	case VK_FORMAT_B8G8R8A8_SRGB:
+		bgra = true;
+		break;
+	default:
+		LOGE("[vr-dump] swapchain format %lld is not 8-bit RGBA/BGRA; "
+		     "nothing dumped", (long long)g.swapchainFormat);
+		return;
+	}
+	char directory[512];
+	if(!frame_diag::dumpDirectory(directory, sizeof(directory)))
+		return;
+
+	const uint32_t width = g.renderWidth;
+	const uint32_t height = g.renderHeight;
+	const VkDeviceSize layerBytes = (VkDeviceSize)width*height*4;
+	const VkImage image = g.images[imageIndex].image;
+
+	VkBuffer buffer = VK_NULL_HANDLE;
+	VkDeviceMemory memory = VK_NULL_HANDLE;
+	VkCommandBuffer commands = VK_NULL_HANDLE;
+	const uint8_t *mapped = nullptr;
+	do{
+		if(!createBuffer(layerBytes*2, VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+		                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+		                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+		                 &buffer, &memory))
+			break;
+		VkCommandBufferAllocateInfo allocInfo = {};
+		allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		allocInfo.commandPool = g.commandPool;
+		allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		allocInfo.commandBufferCount = 1;
+		if(vkAllocateCommandBuffers(g.device, &allocInfo, &commands) !=
+		   VK_SUCCESS){
+			commands = VK_NULL_HANDLE;
+			break;
+		}
+		VkCommandBufferBeginInfo begin = {};
+		begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+		begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+		vkBeginCommandBuffer(commands, &begin);
+
+		VkImageMemoryBarrier barrier = {};
+		barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+		barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+		barrier.image = image;
+		barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		barrier.subresourceRange.levelCount = 1;
+		barrier.subresourceRange.layerCount = 2;
+		barrier.oldLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+		barrier.srcAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+		vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_ALL_COMMANDS_BIT,
+		                     VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr,
+		                     0, nullptr, 1, &barrier);
+
+		VkBufferImageCopy regions[2] = {};
+		for(uint32_t layer = 0; layer < 2; layer++){
+			regions[layer].bufferOffset = layerBytes*layer;
+			regions[layer].imageSubresource.aspectMask =
+				VK_IMAGE_ASPECT_COLOR_BIT;
+			regions[layer].imageSubresource.baseArrayLayer = layer;
+			regions[layer].imageSubresource.layerCount = 1;
+			regions[layer].imageExtent = { width, height, 1 };
+		}
+		vkCmdCopyImageToBuffer(commands, image,
+		                       VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL, buffer,
+		                       2, regions);
+
+		barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+		barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+		barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+		                        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		vkCmdPipelineBarrier(commands, VK_PIPELINE_STAGE_TRANSFER_BIT,
+		                     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
+		                     0, 0, nullptr, 0, nullptr, 1, &barrier);
+		vkEndCommandBuffer(commands);
+
+		VkSubmitInfo submit = {};
+		submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+		submit.commandBufferCount = 1;
+		submit.pCommandBuffers = &commands;
+		if(vkQueueSubmit(g.queue, 1, &submit, VK_NULL_HANDLE) != VK_SUCCESS)
+			break;
+		vkQueueWaitIdle(g.queue);
+
+		void *pointer = nullptr;
+		if(vkMapMemory(g.device, memory, 0, layerBytes*2, 0, &pointer) !=
+		   VK_SUCCESS)
+			break;
+		mapped = (const uint8_t *)pointer;
+	}while(0);
+
+	if(mapped == nullptr)
+		LOGE("[vr-dump] swapchain readback failed; nothing dumped");
+	else{
+		for(int eye = 0; eye < 2; eye++){
+			char path[600];
+			snprintf(path, sizeof(path), "%s/vr-eye%d.bmp", directory, eye);
+			if(frame_diag::writeBmp24(path, mapped + layerBytes*eye,
+			                          (int)width, (int)height, bgra))
+				LOGI("[vr-dump] wrote %s %ux%u format=%lld", path, width,
+				     height, (long long)g.swapchainFormat);
+		}
+		vkUnmapMemory(g.device, memory);
+	}
+	if(commands != VK_NULL_HANDLE)
+		vkFreeCommandBuffers(g.device, g.commandPool, 1, &commands);
+	if(buffer != VK_NULL_HANDLE)
+		vkDestroyBuffer(g.device, buffer, nullptr);
+	if(memory != VK_NULL_HANDLE)
+		vkFreeMemory(g.device, memory, nullptr);
+
+	// The overlay quad is a CPU upload (RGBA, tightly packed) that is kept in
+	// the staging buffer, so it is written from there with no GPU readback.
+	// Always RGBA regardless of the swapchain format: that is the byte order
+	// the game hands over.
+	bool hudDumped = false;
+	if(g.debugVisible && g.debugStagingMapped != nullptr &&
+	   g.debugContentWidth > 0 && g.debugContentHeight > 0){
+		char path[600];
+		snprintf(path, sizeof(path), "%s/vr-hud.bmp", directory);
+		if(frame_diag::writeBmp24(path, (const uint8_t *)g.debugStagingMapped,
+		                          g.debugContentWidth, g.debugContentHeight,
+		                          false)){
+			hudDumped = true;
+			LOGI("[vr-dump] wrote %s %dx%d format=%d", path,
+			     g.debugContentWidth, g.debugContentHeight,
+			     (int)VK_FORMAT_R8G8B8A8_UNORM);
+		}
+	}
+
+	char state[2048];
+	snprintf(state, sizeof(state),
+		"frame=%d\n"
+		"predicted_display_time_ns=%lld\n"
+		"session_state=%s (%d)\n"
+		"should_render=%d\n"
+		"force_render=%d\n"
+		"synthetic_head=%s\n"
+		"diag_yaw=%g\n"
+		"swapchain_format=%lld (%s)\n"
+		"swapchain_size=%ux%u x2 layers\n"
+		"image_index=%u\n"
+		"render_scale_requested=%d%% selected=%d%% effective=%.2f%%\n"
+		"theater_mode=%s\n"
+		"theater_note=%s\n"
+		"bmp_note=bytes copied as stored (no sRGB decode); rows bottom-up\n"
+		"hud=%s\n",
+		frameNumber, (long long)g.predictedDisplayTime,
+		diagSessionStateName(g.sessionState), (int)g.sessionState,
+		g.diagShouldRender ? 1 : 0,
+		frame_diag::config().forceRender ? 1 : 0,
+		g.diagSyntheticHead ? "yes" : "no",
+		(double)frame_diag::config().yawDeg,
+		(long long)g.swapchainFormat, bgra ? "BGRA8" : "RGBA8",
+		width, height, imageIndex,
+		g.renderScaleRequestedPercent, g.renderScaleSelectedPresetPercent,
+		(double)g.renderScaleEffectivePercent,
+		g.theaterMode ? "on" : "off",
+		g.theaterMode ?
+			"menu/cutscene frame: only array layer 0 is submitted (as the "
+			"theater quad); both layers were still dumped" :
+			"immersive frame: layer 0 = left eye, layer 1 = right eye",
+		hudDumped ? "vr-hud.bmp is the last RGBA overlay upload (CPU staging, "
+		            "alpha dropped)" : "overlay not visible; no vr-hud.bmp");
+	char path[600];
+	snprintf(path, sizeof(path), "%s/vr-state.txt", directory);
+	if(frame_diag::writeTextFile(path, state))
+		LOGI("[vr-dump] wrote %s", path);
+}
+
+// Counts frames the game renderer ran for and dumps once on the N-th.
+void
+diagAfterGameRender(uint32_t imageIndex)
+{
+	static int renderedFrames = 0;
+	static bool dumped = false;
+	renderedFrames++;
+	const int target = frame_diag::config().dumpFrame;
+	if(target > 0 && !dumped && renderedFrames >= target){
+		dumped = true;
+		diagDumpSwapchain(imageIndex, renderedFrames);
+	}
+}
+#endif
+
 // Returns false when nothing was rendered. The caller must not submit a
 // projection layer in that case: claiming a layer whose swapchain image was
 // never acquired makes the compositor drop the frame, and Horizon OS replaces
@@ -1961,9 +2546,17 @@ renderLayer(const XrView views[2])
 			eyeQuat[eye][2] = views[eye].pose.orientation.z;
 			eyeQuat[eye][3] = views[eye].pose.orientation.w;
 		}
+#if MIAMIVR_STEAM_FRAME
+		const long long gameStartNs = diagNowNs();
+#endif
 		g.frameRenderer(image.image, image.view, matrices, im2dWorld.m,
 		                im2dDistance, headPos, headYaw, headQuat, eyeFovDeg,
 		                eyePos, eyeQuat);
+#if MIAMIVR_STEAM_FRAME
+		gPerf.gameMs = (float)((diagNowNs() - gameStartNs)*1e-6);
+		// The image must be read back before it is released to the compositor.
+		diagAfterGameRender(imageIndex);
+#endif
 
 		XrSwapchainImageReleaseInfo releaseInfo = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
 		xrReleaseSwapchainImage(g.swapchain, &releaseInfo);
@@ -2391,7 +2984,7 @@ getContext(GraphicsContext *out)
 	out->height = g.renderHeight;
 	out->renderScaleEffectivePercent = g.renderScaleEffectivePercent;
 	out->viewCount = 2;
-	out->colourFormat = (VkFormat)g.swapchainFormat;
+	out->colourFormat = (VkFormat)g.swapchainViewFormat;
 	return true;
 }
 
@@ -2672,6 +3265,10 @@ getInput(ControllerInput *out)
 {
 	if(out != nullptr)
 		*out = g.input;
+#if MIAMIVR_STEAM_FRAME
+	// Latched by pollEvents; handed over exactly once.
+	g.input.systemRecentre = false;
+#endif
 }
 
 void
@@ -2785,6 +3382,25 @@ triggerHaptic(int hand, float amplitude, float frequencyHz, float durationMs)
 	                      (const XrHapticBaseHeader *)&vibration);
 }
 
+#if MIAMIVR_STEAM_FRAME
+static void
+logCurrentInteractionProfiles(void)
+{
+	for(int hand = 0; hand < 2; hand++){
+		XrInteractionProfileState state = { XR_TYPE_INTERACTION_PROFILE_STATE };
+		if(XR_FAILED(xrGetCurrentInteractionProfile(g.session, g.handPath[hand],
+		                                            &state)))
+			continue;
+		char name[XR_MAX_PATH_LENGTH] = "none";
+		uint32_t length = 0;
+		if(state.interactionProfile != XR_NULL_PATH)
+			xrPathToString(g.instance, state.interactionProfile,
+			               sizeof(name), &length, name);
+		LOGI("[vr] interaction profile %s: %s", hand ? "right" : "left", name);
+	}
+}
+#endif
+
 bool
 pollEvents(void)
 {
@@ -2874,6 +3490,16 @@ pollEvents(void)
 		case XR_TYPE_EVENT_DATA_INSTANCE_LOSS_PENDING:
 			g.exitRequested = true;
 			break;
+#if MIAMIVR_STEAM_FRAME
+		case XR_TYPE_EVENT_DATA_REFERENCE_SPACE_CHANGE_PENDING:
+			// A system recentre: treat it as the View hold.
+			LOGI("[vr] reference space change pending: recentre");
+			g.input.systemRecentre = true;
+			break;
+		case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
+			logCurrentInteractionProfiles();
+			break;
+#endif
 		case XR_TYPE_EVENT_DATA_DISPLAY_REFRESH_RATE_CHANGED_FB: {
 			const XrEventDataDisplayRefreshRateChangedFB &changed =
 				*(const XrEventDataDisplayRefreshRateChangedFB *)&event;
@@ -2917,6 +3543,10 @@ void
 renderFrame(void)
 {
 	g.headPoseTrackedForFrame = false;
+#if MIAMIVR_STEAM_FRAME
+	// Polled before the running check so a stalled session still reports.
+	perfPoll();
+#endif
 	if(!g.running)
 		return;
 
@@ -2924,6 +3554,19 @@ renderFrame(void)
 	XrFrameState frameState = { XR_TYPE_FRAME_STATE };
 	if(XR_FAILED(xrWaitFrame(g.session, &waitInfo, &frameState)))
 		return;
+#if MIAMIVR_STEAM_FRAME
+	// Timed from here: xrWaitFrame is the pacing block, not work.
+	const long long perfFrameStartNs = diagNowNs();
+	gPerf.gameMs = 0.0f;
+	g.diagShouldRender = frameState.shouldRender != XR_FALSE;
+	g.diagSyntheticHead = false;
+	// vr-diag.ini force_render: draw and step the game whatever the runtime
+	// says, so a headset left on a desk (SYNCHRONIZED, shouldRender false)
+	// still runs the game.
+	const bool forceRender = frame_diag::config().forceRender;
+#else
+	const bool forceRender = false;
+#endif
 	g.predictedDisplayTime = frameState.predictedDisplayTime;
 	g.lastPredictedDisplayTimeNs = (long long)frameState.predictedDisplayTime;
 	if(g.cpuBoostActive){
@@ -2977,7 +3620,8 @@ renderFrame(void)
 	const XrCompositionLayerBaseHeader *layers[2] = { nullptr, nullptr };
 	uint32_t layerCount = 0;
 
-	if(frameState.shouldRender && g.refreshRateReadyForFrames){
+	if((frameState.shouldRender || forceRender) &&
+	   (g.refreshRateReadyForFrames || forceRender)){
 		XrViewState viewState = { XR_TYPE_VIEW_STATE };
 		XrViewLocateInfo locateInfo = { XR_TYPE_VIEW_LOCATE_INFO };
 		locateInfo.viewConfigurationType = XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
@@ -3012,12 +3656,51 @@ renderFrame(void)
 			LOGI("view state flags 0x%llx", (unsigned long long)reportedFlags);
 		}
 
+#if MIAMIVR_STEAM_FRAME
+		bool syntheticHead = false;
+		if(XR_SUCCEEDED(located) && viewCount == 2)
+			diagCacheFov(views);
+		if(forceRender){
+			// Off the desk the runtime gives no usable head pose (and before
+			// FOCUSED it may give a stale one), so pose a fixed head instead.
+			const bool orientationValid =
+				XR_SUCCEEDED(located) && viewCount == 2 &&
+				(viewState.viewStateFlags &
+				 XR_VIEW_STATE_ORIENTATION_VALID_BIT) != 0;
+			if(!orientationValid || g.sessionState != XR_SESSION_STATE_FOCUSED){
+				diagMakeSyntheticViews(views, frame_diag::config().yawDeg);
+				located = XR_SUCCESS;
+				viewCount = 2;
+				viewState.viewStateFlags |=
+					XR_VIEW_STATE_POSITION_VALID_BIT |
+					XR_VIEW_STATE_ORIENTATION_VALID_BIT;
+				syntheticHead = true;
+				static bool reportedSynthetic = false;
+				if(!reportedSynthetic){
+					reportedSynthetic = true;
+					LOGI("[vr] diag synthetic head active (session state %s, "
+					     "yaw %g deg, real orientation %s)",
+					     diagSessionStateName(g.sessionState),
+					     (double)frame_diag::config().yawDeg,
+					     orientationValid ? "valid" : "invalid");
+				}
+			}
+		}
+		g.diagSyntheticHead = syntheticHead;
+#endif
+
 		const XrViewStateFlags trackedHeadFlags =
 			XR_VIEW_STATE_POSITION_VALID_BIT | XR_VIEW_STATE_ORIENTATION_VALID_BIT |
 			XR_VIEW_STATE_POSITION_TRACKED_BIT | XR_VIEW_STATE_ORIENTATION_TRACKED_BIT;
 		g.headPoseTrackedForFrame = XR_SUCCEEDED(located) && viewCount == 2 &&
 			g.sessionState == XR_SESSION_STATE_FOCUSED &&
 			(viewState.viewStateFlags & trackedHeadFlags) == trackedHeadFlags;
+#if MIAMIVR_STEAM_FRAME
+		// Gameplay head tracking is gated on this; the synthetic head is the
+		// pose the game should follow.
+		if(syntheticHead)
+			g.headPoseTrackedForFrame = true;
+#endif
 		if(XR_SUCCEEDED(located) &&
 		   (viewState.viewStateFlags & XR_VIEW_STATE_ORIENTATION_VALID_BIT) != 0 &&
 		   (locateControllerPoses(submitSpace,
@@ -3184,6 +3867,11 @@ renderFrame(void)
 		queryFrameTime(g.appGpuFrameTimePath,
 			&g.appGpuFrameTimeMs, &g.appGpuFrameTimeValid);
 	}
+
+#if MIAMIVR_STEAM_FRAME
+	perfAddFrame(perfFrameStartNs, frameState.predictedDisplayTime,
+	             frameState.predictedDisplayPeriod);
+#endif
 }
 
 void

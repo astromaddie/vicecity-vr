@@ -1345,6 +1345,12 @@ CapturePad(RwInt32 padID)
 		state.DPadRight = horizontal > 0 ? 255 : 0;
 		state.DPadUp    = vertical > 0 ? 255 : 0;
 		state.DPadDown  = vertical < 0 ? 255 : 0;
+#if MIAMIVR_STEAM_FRAME
+		// View's short press backs out of the frontend, whose back button
+		// is Triangle (TRIANGLE_BACK_BUTTON); one frame is one edge.
+		if(in.viewBack)
+			state.Triangle = 255;
+#endif
 	}else{
 		gQuestFrontendHorizontalDirection = 0;
 		gQuestFrontendVerticalDirection = 0;
@@ -1370,6 +1376,14 @@ CapturePad(RwInt32 padID)
 		state.DPadUp    = moveStickY >=  mirror ? 255 : 0;
 		state.DPadDown  = moveStickY <= -mirror ? 255 : 0;
 	}
+#if MIAMIVR_STEAM_FRAME
+	// The Frame's own D-pad (left controller) is the game's D-pad, in the
+	// frontend and in play, alongside the stick-built one above.
+	if(in.dpadLeft)  state.DPadLeft  = 255;
+	if(in.dpadRight) state.DPadRight = 255;
+	if(in.dpadUp)    state.DPadUp    = 255;
+	if(in.dpadDown)  state.DPadDown  = 255;
+#endif
 }
 
 // GetLocalTime_CP comes from src/skel/crossplatform.cpp, which is already in

@@ -64,6 +64,13 @@ struct PadInput
 	bool leftStickClick, rightStickClick;
 	Pose gripPose[2];
 	Pose aimPose[2];
+#if MIAMIVR_STEAM_FRAME
+	// Steam Frame: the left D-pad, and View's short press as a one-frame
+	// "back" pulse (the hold is the recentre, handled before the game sees
+	// the pad; see android_main.cpp).
+	bool dpadUp, dpadDown, dpadLeft, dpadRight;
+	bool viewBack;
+#endif
 };
 
 // Controller remapping. Every physical Touch input the game reads as a plain

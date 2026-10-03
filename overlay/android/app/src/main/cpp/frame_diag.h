@@ -28,6 +28,9 @@ struct Config
 	int dumpFrame = 0;
 	// Recognised for the cross-port standard; [vr-perf] is always on.
 	bool timing = false;
+	// Start a new game from the title menu without input, once, so the
+	// opening cutscenes and loads can be tested with nobody wearing it.
+	bool newGame = false;
 };
 
 // Reads <storageRoot>/vr-diag.ini. Call once after the storage root is set;

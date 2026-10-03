@@ -126,6 +126,7 @@ and remove them with `--diag-reset` before playing:
 | `diag_yaw` | 0 | Yaw of the synthetic head, in degrees (positive turns left) |
 | `dump_frame` | 0 | On the Nth rendered frame, write `vr-dumps/vr-eye0.bmp`, `vr-eye1.bmp`, `vr-hud.bmp` (when the menu quad is visible) and `vr-state.txt`. Runs once and stalls once |
 | `timing` | 0 | Recognised; `[vr-perf]` is logged every 10 s regardless |
+| `diag_new_game` | 0 | Start a new game from the title menu after about 5 s, with no input (use with `force_render`) |
 
 ```sh
 tools/steam_frame/deploy.sh --clear-dumps --diag force_render=1 --diag dump_frame=600 \
@@ -149,6 +150,7 @@ their game. Check first, for example with
 | Frame bindings use only real component paths on the right hands, with unique action names | host test |
 | Lepton is API 30, Vulkan 1.1, no headtracking feature; SteamVR runtime manifest present | device, read-only |
 | Installs and plays from the ViceCityVR Steam title; data and settings in `~/Documents/ViceCityVR` | **worn** (user report, 2026-10-03) |
-| CINEMA 3D cutscenes | host build only, **not worn** |
-| Third-person view (3D screen, over shoulder, View toggle, third-person pad) | host build only, **not worn** |
+| CINEMA 3D cutscenes (projection layer) | **worn** (user: "it works now", 2026-10-03) |
+| Third-person view: both styles and the View toggle | **worn**, toggled repeatedly in the log (2026-10-03); per-control feedback not given |
+| Freeze at the third intro scene load (17:32, 2026-10-03) | seen once; the next new game loaded in 0.07 s. **Open**: the watchdog now logs `[vr-stall]` traces |
 | Individual controls, colours, performance | not yet reported |

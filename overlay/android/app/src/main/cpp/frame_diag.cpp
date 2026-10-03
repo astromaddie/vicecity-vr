@@ -85,6 +85,13 @@ applyKey(const char *key, const char *value)
 		}
 		gConfig.timing = number != 0;
 		LOGI("[vr] diag timing=%d", gConfig.timing ? 1 : 0);
+	}else if(strcmp(key, "diag_new_game") == 0){
+		if(!parseInt(value, &number)){
+			LOGW("[vr] diag bad value for %s: '%s' (ignored)", key, value);
+			return;
+		}
+		gConfig.newGame = number != 0;
+		LOGI("[vr] diag diag_new_game=%d", gConfig.newGame ? 1 : 0);
 	}else
 		LOGW("[vr] diag unknown key '%s' (ignored)", key);
 }

@@ -10,6 +10,12 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/stat.h>
+#if MIAMIVR_STEAM_FRAME
+#include <dlfcn.h>
+#include <signal.h>
+#include <sys/syscall.h>
+#include <ucontext.h>
+#endif
 
 #include <algorithm>
 #include <atomic>
@@ -115,13 +121,101 @@ stdioPump(void *)
 
 static std::atomic<const char *> gCheckpoint{"start"};
 static std::atomic<unsigned long> gCheckpointSeq{0};
+#if MIAMIVR_STEAM_FRAME
+// The thread that last passed a checkpoint, so a stall can be traced there.
+static std::atomic<pid_t> gCheckpointTid{0};
+#endif
 
 void
 setCheckpoint(const char *label)
 {
 	gCheckpoint.store(label, std::memory_order_relaxed);
 	gCheckpointSeq.fetch_add(1, std::memory_order_relaxed);
+#if MIAMIVR_STEAM_FRAME
+	gCheckpointTid.store(gettid(), std::memory_order_relaxed);
+#endif
 }
+
+#if MIAMIVR_STEAM_FRAME
+// Steam Frame stall traces. A stalled game thread gets SIGURG (unused by the
+// game); the handler walks its frame-pointer chain (arm64 Android keeps frame
+// pointers) into a static buffer, and the watchdog resolves and logs it as
+// "[vr-stall] #n lib+offset symbol". Symbolise offsets in libmiamivr.so with
+// llvm-addr2line on the unstripped library from the build's .cxx tree.
+static const int kStallFrames = 48;
+static uintptr_t gStallPcs[kStallFrames];
+static std::atomic<int> gStallPcCount{-1};
+
+static void
+stallTraceHandler(int, siginfo_t *, void *context)
+{
+	const ucontext_t *uc = (const ucontext_t *)context;
+	int count = 0;
+	gStallPcs[count++] = (uintptr_t)uc->uc_mcontext.pc;
+	gStallPcs[count++] = (uintptr_t)uc->uc_mcontext.regs[30];   // lr
+	uintptr_t fp = (uintptr_t)uc->uc_mcontext.regs[29];
+	const uintptr_t sp = (uintptr_t)uc->uc_mcontext.sp;
+	// Only follow a chain that stays on this stack, ascending and aligned.
+	while(count < kStallFrames && fp >= sp && fp < sp + 8*1024*1024 &&
+	      (fp & 15) == 0){
+		const uintptr_t *frame = (const uintptr_t *)fp;
+		const uintptr_t next = frame[0];
+		const uintptr_t ret = frame[1];
+		if(ret == 0)
+			break;
+		gStallPcs[count++] = ret;
+		if(next <= fp)
+			break;
+		fp = next;
+	}
+	gStallPcCount.store(count, std::memory_order_release);
+}
+
+static void
+logStallTrace(pid_t tid)
+{
+	static bool installed;
+	if(!installed){
+		struct sigaction action = {};
+		action.sa_sigaction = stallTraceHandler;
+		action.sa_flags = SA_SIGINFO | SA_RESTART;
+		sigemptyset(&action.sa_mask);
+		sigaction(SIGURG, &action, nullptr);
+		installed = true;
+	}
+	if(tid <= 0)
+		return;
+	gStallPcCount.store(-1, std::memory_order_relaxed);
+	if(syscall(SYS_tgkill, getpid(), tid, SIGURG) != 0){
+		LOGE("[vr-stall] cannot signal thread %d", (int)tid);
+		return;
+	}
+	int count = -1;
+	for(int wait = 0; wait < 50 && count < 0; wait++){
+		usleep(2000);
+		count = gStallPcCount.load(std::memory_order_acquire);
+	}
+	if(count < 0){
+		LOGE("[vr-stall] thread %d did not answer (blocked in the kernel?)",
+		     (int)tid);
+		return;
+	}
+	LOGE("[vr-stall] thread %d, %d frames:", (int)tid, count);
+	for(int i = 0; i < count; i++){
+		Dl_info info = {};
+		const uintptr_t pc = gStallPcs[i];
+		if(dladdr((const void *)pc, &info) && info.dli_fname != nullptr){
+			const char *lib = strrchr(info.dli_fname, '/');
+			LOGE("[vr-stall] #%02d %s+0x%lx %s", i,
+			     lib ? lib + 1 : info.dli_fname,
+			     (unsigned long)(pc - (uintptr_t)info.dli_fbase),
+			     info.dli_sname ? info.dli_sname : "");
+		}else{
+			LOGE("[vr-stall] #%02d 0x%lx", i, (unsigned long)pc);
+		}
+	}
+}
+#endif
 
 static void *
 stallWatchdog(void *)
@@ -137,9 +231,13 @@ stallWatchdog(void *)
 			continue;
 		}
 		stalledFor++;
-		if(stalledFor == 3 || stalledFor % 10 == 0)
+		if(stalledFor == 3 || stalledFor % 10 == 0){
 			LOGE("stalled %ds at checkpoint '%s'", stalledFor,
 			     gCheckpoint.load(std::memory_order_relaxed));
+#if MIAMIVR_STEAM_FRAME
+			logStallTrace(gCheckpointTid.load(std::memory_order_relaxed));
+#endif
+		}
 	}
 	return nullptr;
 }

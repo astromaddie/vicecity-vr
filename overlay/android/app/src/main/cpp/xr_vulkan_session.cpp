@@ -3554,6 +3554,48 @@ pollEvents(void)
 	return !g.exitRequested;
 }
 
+#if MIAMIVR_STEAM_FRAME
+// The theater screen as a projection layer: per eye, a view with the screen's
+// (yaw-only) orientation, the eye's own position, and the field of view the
+// screen rectangle subtends from there. Returns false when an eye is not in
+// front of the screen, which leaves the flat quad in place.
+static bool
+makeTheaterProjectionViews(const XrView views[2],
+                           XrCompositionLayerProjectionView out[2])
+{
+	const XrQuaternionf &q = g.theaterPose.orientation;
+	for(int eye = 0; eye < 2; eye++){
+		// The eye in the screen's frame: rotate (eye - centre) by q^-1.
+		// q is a rotation about +Y only (x = z = 0).
+		const float dx = views[eye].pose.position.x - g.theaterPose.position.x;
+		const float dy = views[eye].pose.position.y - g.theaterPose.position.y;
+		const float dz = views[eye].pose.position.z - g.theaterPose.position.z;
+		const float c = q.w*q.w - q.y*q.y;      // cos(yaw)
+		const float s = 2.0f*q.w*q.y;          // sin(yaw)
+		const float ex = c*dx - s*dz;
+		const float ey = dy;
+		const float ez = s*dx + c*dz;
+		// The screen faces +Z; an eye in front of it has ez > 0.
+		if(ez < 0.1f)
+			return false;
+		const float halfW = 0.5f*kTheaterScreenWidth;
+		const float halfH = 0.5f*kTheaterScreenHeight;
+		out[eye] = { XR_TYPE_COMPOSITION_LAYER_PROJECTION_VIEW };
+		out[eye].pose.orientation = q;
+		out[eye].pose.position = views[eye].pose.position;
+		out[eye].fov.angleLeft  = atan2f(-halfW - ex, ez);
+		out[eye].fov.angleRight = atan2f( halfW - ex, ez);
+		out[eye].fov.angleDown  = atan2f(-halfH - ey, ez);
+		out[eye].fov.angleUp    = atan2f( halfH - ey, ez);
+		out[eye].subImage.swapchain = g.swapchain;
+		out[eye].subImage.imageRect.extent = {
+			(int32_t)g.renderWidth, (int32_t)g.renderHeight };
+		out[eye].subImage.imageArrayIndex = (uint32_t)eye;
+	}
+	return true;
+}
+#endif
+
 bool
 shouldRender(void)
 {
@@ -3646,7 +3688,6 @@ renderFrame(void)
 	XrCompositionLayerProjectionView projectionViews[2] = {};
 	XrCompositionLayerProjection layer = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerQuad theaterLayer = { XR_TYPE_COMPOSITION_LAYER_QUAD };
-	XrCompositionLayerQuad theaterLayerRight = { XR_TYPE_COMPOSITION_LAYER_QUAD };
 	XrCompositionLayerQuad debugLayer = { XR_TYPE_COMPOSITION_LAYER_QUAD };
 	const XrCompositionLayerBaseHeader *layers[3] = { nullptr, nullptr, nullptr };
 	uint32_t layerCount = 0;
@@ -3788,16 +3829,21 @@ renderFrame(void)
 					(const XrCompositionLayerBaseHeader *)&theaterLayer;
 				layerCount = 1;
 #if MIAMIVR_STEAM_FRAME
-				// 3D cinema: the same screen twice, one per eye, each showing
-				// that eye's layer. The renderer drew the two layers from
-				// two cameras converged on the screen plane.
-				if(g.theaterStereo){
-					theaterLayer.eyeVisibility = XR_EYE_VISIBILITY_LEFT;
-					theaterLayerRight = theaterLayer;
-					theaterLayerRight.eyeVisibility = XR_EYE_VISIBILITY_RIGHT;
-					theaterLayerRight.subImage.imageArrayIndex = 1;
-					layers[layerCount++] =
-						(const XrCompositionLayerBaseHeader *)&theaterLayerRight;
+				// 3D cinema. The renderer drew the two layers from two cameras
+				// converged on the screen plane, so each eye must see only its
+				// own. SteamVR showed per-eye quads (eyeVisibility LEFT/RIGHT)
+				// flat on the Frame, so the screen goes out as a projection
+				// layer instead: each eye's view keeps the screen's
+				// orientation and its field of view is exactly the screen
+				// rectangle as that eye sees it. The image then lands on the
+				// same rectangle in the room, with each eye's own picture.
+				if(g.theaterStereo &&
+				   makeTheaterProjectionViews(views, projectionViews)){
+					layer.space = submitSpace;
+					layer.viewCount = 2;
+					layer.views = projectionViews;
+					layers[0] = (const XrCompositionLayerBaseHeader *)&layer;
+					layerCount = 1;
 				}
 #endif
 			}else{

@@ -41,6 +41,9 @@
 #include "Draw.h"
 #include "Renderer.h"
 #include "Streaming.h"
+#if MIAMIVR_STEAM_FRAME
+#include "frame_diag.h"
+#endif
 #include "vulkan/rwvk.h"
 #ifdef GTA_VR_WEAPONS
 #include "OculusVR.h"
@@ -1322,6 +1325,31 @@ ApplyQuestSnapTurn(float stickX)
 	}
 }
 
+#if MIAMIVR_STEAM_FRAME
+// vr-diag.ini diag_new_game=1: once the title menu has been up for a few
+// seconds with no game loaded, start a new game as if the player chose it, so
+// the opening cutscenes and the scene loads after them can be run with nobody
+// in the headset (with force_render).
+static void
+DiagStartNewGame(void)
+{
+	static bool done;
+	static int frontendFrames;
+	if(done || !frame_diag::config().newGame)
+		return;
+	if(!FrontEndMenuManager.m_bMenuActive ||
+	   !FrontEndMenuManager.m_bGameNotLoaded){
+		frontendFrames = 0;
+		return;
+	}
+	if(++frontendFrames < 300)
+		return;
+	done = true;
+	ALOG("[vr] diag: starting a new game");
+	FrontEndMenuManager.DoSettingsBeforeStartingAGame();
+}
+#endif
+
 void
 CapturePad(RwInt32 padID)
 {
@@ -1329,6 +1357,9 @@ CapturePad(RwInt32 padID)
 		return;
 
 	VrUpdateFirstPersonAnchor(false);
+#if MIAMIVR_STEAM_FRAME
+	DiagStartNewGame();
+#endif
 
 	CControllerState &state = CPad::GetPad(0)->PCTempJoyState;
 	state.Clear();

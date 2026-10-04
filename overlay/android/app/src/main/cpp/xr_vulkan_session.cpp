@@ -406,6 +406,44 @@ struct State
 	XrSpace menuSpace = XR_NULL_HANDLE;
 	float menuYaw = 0.0f;
 	XrVector3f menuHeadPos = {};
+#if MIAMIVR_STEAM_FRAME
+	// Menu laser pointer: a beam strip and a cursor dot, each its own
+	// alpha-blended quad layer submitted after every other layer, so they
+	// composite over the menu, the cinema screen and the world. One small
+	// swapchain holds the artwork, uploaded from CPU pixels each frame.
+	XrSwapchain pointerSwapchain = XR_NULL_HANDLE;
+	std::vector<VkImage> pointerImages;
+	VkBuffer pointerStaging = VK_NULL_HANDLE;
+	VkDeviceMemory pointerStagingMemory = VK_NULL_HANDLE;
+	void *pointerStagingMapped = nullptr;
+	VkCommandBuffer pointerCommand = VK_NULL_HANDLE;
+	VkFence pointerFence = VK_NULL_HANDLE;
+	bool pointerSubmissionPending = false;
+	// The game says the frontend is what the theater screen shows.
+	bool pointerFrontendUp = false;
+	// Trigger state with hysteresis (down at 0.6, up below 0.45).
+	bool pointerDown = false;
+	// What updatePointer worked out this frame; the layers are built from it.
+	bool ptrActive = false;
+	bool ptrHit = false;
+	bool ptrHeadValid = false;
+	XrVector3f ptrOrigin = {}, ptrDir = {}, ptrHitPos = {}, ptrHead = {};
+	// What the last frame submitted, for the dump's flat composite.
+	struct DiagLayers {
+		bool valid = false;
+		XrPosef head = {};
+		bool theater = false;
+		XrPosef theaterPose = {};
+		XrExtent2Df theaterSize = {};
+		bool menu = false;
+		XrPosef menuPose = {};
+		XrExtent2Df menuSize = {};
+		int pointerCount = 0;
+		XrPosef pointerPose[2] = {};
+		XrExtent2Df pointerSize[2] = {};
+		int pointerRect[2][4] = {};
+	} diagLayers;
+#endif
 
 	// XR_META_performance_metrics is the authoritative Quest-side app timing
 	// source. Vulkan timestamps remain useful because they isolate this
@@ -1730,6 +1768,44 @@ createSwapchain(void)
 			g.debugSwapchain = XR_NULL_HANDLE;
 		}
 	}
+#if MIAMIVR_STEAM_FRAME
+	// Laser pointer artwork: 192 x 64, see buildPointerAtlas. Without it the
+	// pointer is simply absent and the menus work from the pad.
+	{
+		XrSwapchainCreateInfo pinfo = { XR_TYPE_SWAPCHAIN_CREATE_INFO };
+		pinfo.usageFlags = XR_SWAPCHAIN_USAGE_COLOR_ATTACHMENT_BIT |
+		                   XR_SWAPCHAIN_USAGE_TRANSFER_DST_BIT |
+		                   XR_SWAPCHAIN_USAGE_SAMPLED_BIT;
+		pinfo.format = g.swapchainFormat;
+		pinfo.sampleCount = 1;
+		pinfo.width = 192;
+		pinfo.height = 64;
+		pinfo.faceCount = 1;
+		pinfo.arraySize = 1;
+		pinfo.mipCount = 1;
+		if(XR_SUCCEEDED(xrCreateSwapchain(g.session, &pinfo, &g.pointerSwapchain))){
+			uint32_t count = 0;
+			xrEnumerateSwapchainImages(g.pointerSwapchain, 0, &count, nullptr);
+			std::vector<XrSwapchainImageVulkan2KHR> imgs(
+				count, { XR_TYPE_SWAPCHAIN_IMAGE_VULKAN2_KHR });
+			if(count > 0 && XR_SUCCEEDED(xrEnumerateSwapchainImages(
+			       g.pointerSwapchain, count, &count,
+			       (XrSwapchainImageBaseHeader *)imgs.data()))){
+				g.pointerImages.resize(count);
+				for(uint32_t i = 0; i < count; i++)
+					g.pointerImages[i] = imgs[i].image;
+				LOGI("[ui.pointer] swapchain 192x64, %u images", count);
+			}else{
+				LOGE("[ui.pointer] swapchain images unavailable; no pointer");
+				xrDestroySwapchain(g.pointerSwapchain);
+				g.pointerSwapchain = XR_NULL_HANDLE;
+			}
+		}else{
+			LOGE("[ui.pointer] swapchain create failed; no pointer");
+			g.pointerSwapchain = XR_NULL_HANDLE;
+		}
+	}
+#endif
 	return true;
 }
 
@@ -2131,6 +2207,497 @@ drawScene(VkCommandBuffer commandBuffer)
 
 #if MIAMIVR_STEAM_FRAME
 // ---------------------------------------------------------------------------
+// Menu laser pointer (standard.md section 3). A ray from the right controller's
+// aim pose is tested against the theater screen (while the frontend is on it)
+// and the VR menu panel, using the quads exactly as this frame submits them,
+// and the nearest hit wins. The beam and the dot are two alpha-blended quad
+// layers submitted last, so SteamVR composites them over everything else.
+// ---------------------------------------------------------------------------
+static inline XrVector3f ptAdd(XrVector3f a, XrVector3f b) { return { a.x + b.x, a.y + b.y, a.z + b.z }; }
+static inline XrVector3f ptSub(XrVector3f a, XrVector3f b) { return { a.x - b.x, a.y - b.y, a.z - b.z }; }
+static inline XrVector3f ptScale(XrVector3f a, float k) { return { a.x*k, a.y*k, a.z*k }; }
+static inline float ptDot(XrVector3f a, XrVector3f b) { return a.x*b.x + a.y*b.y + a.z*b.z; }
+static inline XrVector3f ptCross(XrVector3f a, XrVector3f b)
+{
+	return { a.y*b.z - a.z*b.y, a.z*b.x - a.x*b.z, a.x*b.y - a.y*b.x };
+}
+static inline XrVector3f ptNorm(XrVector3f a, XrVector3f fallback)
+{
+	const float l = sqrtf(ptDot(a, a));
+	return (isfinite(l) && l > 1e-6f) ? ptScale(a, 1.0f/l) : fallback;
+}
+static inline XrVector3f ptRotate(const XrQuaternionf &q, XrVector3f v)
+{
+	const XrVector3f u = { q.x, q.y, q.z };
+	const XrVector3f t2 = ptScale(ptCross(u, v), 2.0f);
+	return ptAdd(ptAdd(v, ptScale(t2, q.w)), ptCross(u, t2));
+}
+static inline XrQuaternionf ptConj(const XrQuaternionf &q) { return { -q.x, -q.y, -q.z, q.w }; }
+
+// Rotation with the given axes as columns, as a quaternion.
+static XrQuaternionf
+ptFromAxes(XrVector3f x, XrVector3f y, XrVector3f z)
+{
+	const float m00 = x.x, m10 = x.y, m20 = x.z;
+	const float m01 = y.x, m11 = y.y, m21 = y.z;
+	const float m02 = z.x, m12 = z.y, m22 = z.z;
+	XrQuaternionf q = { 0.0f, 0.0f, 0.0f, 1.0f };
+	const float trace = m00 + m11 + m22;
+	if(trace > 0.0f){
+		const float k = 0.5f/sqrtf(trace + 1.0f);
+		q = { (m21 - m12)*k, (m02 - m20)*k, (m10 - m01)*k, 0.25f/k };
+	}else if(m00 > m11 && m00 > m22){
+		const float k = 2.0f*sqrtf(1.0f + m00 - m11 - m22);
+		q = { 0.25f*k, (m01 + m10)/k, (m02 + m20)/k, (m21 - m12)/k };
+	}else if(m11 > m22){
+		const float k = 2.0f*sqrtf(1.0f + m11 - m00 - m22);
+		q = { (m01 + m10)/k, 0.25f*k, (m12 + m21)/k, (m02 - m20)/k };
+	}else{
+		const float k = 2.0f*sqrtf(1.0f + m22 - m00 - m11);
+		q = { (m02 + m20)/k, (m12 + m21)/k, 0.25f*k, (m10 - m01)/k };
+	}
+	const float n = sqrtf(q.x*q.x + q.y*q.y + q.z*q.z + q.w*q.w);
+	if(n > 1e-6f)
+		q = { q.x/n, q.y/n, q.z/n, q.w/n };
+	return q;
+}
+
+// Ray against a quad (+Z towards the viewer, X right, Y up). u from the left,
+// v from the top, both 0..1 on a hit.
+static bool
+ptRayQuad(const XrPosef &pose, const XrExtent2Df &size, XrVector3f o, XrVector3f d,
+          float *tOut, float *uOut, float *vOut)
+{
+	if(size.width <= 0.0f || size.height <= 0.0f)
+		return false;
+	const XrQuaternionf inv = ptConj(pose.orientation);
+	const XrVector3f lo = ptRotate(inv, ptSub(o, pose.position));
+	const XrVector3f ld = ptRotate(inv, d);
+	if(ld.z >= -1e-4f)
+		return false;                      // pointing away from the face
+	const float t = -lo.z/ld.z;
+	if(!(t > 0.0f))
+		return false;
+	const float hx = lo.x + t*ld.x;
+	const float hy = lo.y + t*ld.y;
+	if(fabsf(hx) > size.width*0.5f || fabsf(hy) > size.height*0.5f)
+		return false;
+	*tOut = t;
+	*uOut = hx/size.width + 0.5f;
+	*vOut = 0.5f - hy/size.height;
+	return true;
+}
+
+// Pointer artwork, 192 x 64, straight alpha, row 0 at the top:
+//   x   0..63   cursor dot, idle (cyan)
+//   x  64..127  cursor dot, trigger down (amber)
+//   x 128..191  beam strip, rows 28..35 (alpha ramps up towards the hit point)
+static const int kPointerTexW = 192, kPointerTexH = 64;
+static const int kPointerBeamRow = 28, kPointerBeamRows = 8;
+
+static float
+ptSmooth(float a, float b, float x)
+{
+	float k = (x - a)/(b - a);
+	k = k < 0.0f ? 0.0f : k > 1.0f ? 1.0f : k;
+	return k*k*(3.0f - 2.0f*k);
+}
+
+// RGBA byte order; uploadPointerAtlas swaps for BGRA swapchains.
+static void
+buildPointerAtlas(uint8_t *px)
+{
+	memset(px, 0, (size_t)kPointerTexW*kPointerTexH*4);
+	auto put = [&](int x, int y, float r, float gr, float b, float a){
+		auto byte = [](float v){
+			return (uint8_t)((v < 0.0f ? 0.0f : v > 1.0f ? 1.0f : v)*255.0f + 0.5f);
+		};
+		uint8_t *d = px + ((size_t)y*kPointerTexW + x)*4;
+		d[0] = byte(r); d[1] = byte(gr); d[2] = byte(b); d[3] = byte(a);
+	};
+	for(int cell = 0; cell < 2; cell++){
+		const float cr = cell == 0 ? 0.62f : 1.00f;
+		const float cg = cell == 0 ? 0.93f : 0.78f;
+		const float cb = cell == 0 ? 1.00f : 0.35f;
+		for(int y = 0; y < 64; y++){
+			for(int x = 0; x < 64; x++){
+				const float dx = (x + 0.5f - 32.0f)/32.0f;
+				const float dy = (y + 0.5f - 32.0f)/32.0f;
+				const float r = sqrtf(dx*dx + dy*dy);
+				// A dark halo for contrast on bright panels, a bright disc on top.
+				const float halo = 0.80f*(1.0f - ptSmooth(0.56f, 0.82f, r));
+				const float disc = 1.0f - ptSmooth(0.36f, 0.44f, r);
+				const float a = disc + halo*(1.0f - disc);
+				if(a <= 0.0f)
+					continue;
+				const float k = disc/a;
+				put(cell*64 + x, y, cr*k + 0.03f*(1.0f - k),
+				    cg*k + 0.06f*(1.0f - k), cb*k + 0.12f*(1.0f - k), a);
+			}
+		}
+	}
+	for(int row = 0; row < kPointerBeamRows; row++){
+		const float dy = fabsf((row + 0.5f) - kPointerBeamRows*0.5f)/(kPointerBeamRows*0.5f);
+		const float edge = 1.0f - ptSmooth(0.25f, 1.0f, dy);
+		for(int x = 0; x < 64; x++){
+			const float ramp = 0.30f + 0.65f*((float)x/63.0f);
+			put(128 + x, kPointerBeamRow + row, 0.70f, 0.95f, 1.0f, ramp*edge);
+		}
+	}
+}
+
+static const uint8_t *
+pointerAtlas(void)
+{
+	static std::vector<uint8_t> atlas;
+	if(atlas.empty()){
+		atlas.resize((size_t)kPointerTexW*kPointerTexH*4);
+		buildPointerAtlas(atlas.data());
+	}
+	return atlas.data();
+}
+
+// Where the right hand's ray starts and points. With vr-diag.ini
+// diag_pointer set and nobody holding a controller, a synthetic hand a little
+// below and to the right of the head aims at a chosen point on a surface.
+static bool
+pointerAim(const XrPosef &head, bool theaterSurface, const XrPosef &theaterPose,
+           bool menuSurface, const XrPosef &menuPose, const XrExtent2Df &menuSize,
+           XrVector3f *origin, XrVector3f *dir)
+{
+	const frame_diag::Config &cfg = frame_diag::config();
+	if(cfg.pointerTarget != 0 &&
+	   ((cfg.pointerTarget == 1 && theaterSurface) ||
+	    (cfg.pointerTarget == 2 && menuSurface))){
+		const XrPosef &pose = cfg.pointerTarget == 1 ? theaterPose : menuPose;
+		const XrExtent2Df size = cfg.pointerTarget == 1 ?
+			XrExtent2Df{ kTheaterScreenWidth, kTheaterScreenHeight } : menuSize;
+		const XrVector3f local = { (cfg.pointerU - 0.5f)*size.width,
+		                           (0.5f - cfg.pointerV)*size.height, 0.0f };
+		const XrVector3f target = ptAdd(pose.position, ptRotate(pose.orientation, local));
+		const XrVector3f hand = ptAdd(head.position,
+			ptRotate(head.orientation, { 0.20f, -0.30f, -0.15f }));
+		*origin = hand;
+		*dir = ptNorm(ptSub(target, hand), { 0.0f, 0.0f, -1.0f });
+		return true;
+	}
+	const TrackedPose &aim = g.input.aimPose[1];
+	if(!aim.valid)
+		return false;
+	const XrQuaternionf q = { aim.orientation[0], aim.orientation[1],
+	                          aim.orientation[2], aim.orientation[3] };
+	*origin = { aim.position[0], aim.position[1], aim.position[2] };
+	*dir = ptNorm(ptRotate(q, { 0.0f, 0.0f, -1.0f }), { 0.0f, 0.0f, -1.0f });
+	return true;
+}
+
+// Works out the pointer for this frame from the layers just built. The result
+// reaches the game one frame later, through getInput.
+static void
+updatePointer(const XrView views[2], bool theaterSurface, const XrPosef &theaterPose,
+              bool menuSurface, const XrPosef &menuPose, const XrExtent2Df &menuSize)
+{
+	ControllerInput &in = g.input;
+	in.pointerPressed = false;
+	in.pointerFrontend = false;
+	in.pointerMenu = false;
+	g.ptrActive = false;
+	g.ptrHit = false;
+
+	// Trigger with hysteresis. Kept current even while nothing is a target, so
+	// holding it as a menu opens does not read as a fresh click.
+	const float trigger = in.rightTrigger;
+	g.pointerDown = g.pointerDown ? trigger > 0.45f : trigger > 0.6f;
+
+	const bool frontendTarget = theaterSurface && g.pointerFrontendUp;
+	if(!frontendTarget && !menuSurface)
+		return;
+
+	XrPosef head = views[0].pose;
+	head.position.x = (views[0].pose.position.x + views[1].pose.position.x)*0.5f;
+	head.position.y = (views[0].pose.position.y + views[1].pose.position.y)*0.5f;
+	head.position.z = (views[0].pose.position.z + views[1].pose.position.z)*0.5f;
+
+	XrVector3f origin, dir;
+	if(!pointerAim(head, frontendTarget, theaterPose, menuSurface, menuPose, menuSize,
+	               &origin, &dir))
+		return;
+
+	const XrExtent2Df theaterSize = { kTheaterScreenWidth, kTheaterScreenHeight };
+	float tT = 0, uT = 0, vT = 0, tM = 0, uM = 0, vM = 0;
+	const bool hitTheater = frontendTarget &&
+		ptRayQuad(theaterPose, theaterSize, origin, dir, &tT, &uT, &vT);
+	const bool hitMenu = menuSurface &&
+		ptRayQuad(menuPose, menuSize, origin, dir, &tM, &uM, &vM);
+
+	g.ptrActive = true;
+	g.ptrOrigin = origin;
+	g.ptrDir = dir;
+	g.ptrHead = head.position;
+	g.ptrHeadValid = true;
+	in.pointerPressed = g.pointerDown;
+
+	const char *target = "none";
+	if(hitMenu && (!hitTheater || tM <= tT)){
+		g.ptrHit = true;
+		g.ptrHitPos = ptAdd(origin, ptScale(dir, tM));
+		in.pointerMenu = true;
+		in.menuU = uM;
+		in.menuV = vM;
+		target = "vrmenu";
+	}else if(hitTheater){
+		g.ptrHit = true;
+		g.ptrHitPos = ptAdd(origin, ptScale(dir, tT));
+		in.pointerFrontend = true;
+		in.frontendU = uT;
+		in.frontendV = vT;
+		target = "frontend";
+	}
+	static const char *lastTarget = "";
+	if(strcmp(lastTarget, target) != 0){
+		lastTarget = target;
+		LOGI("[ui.pointer] target=%s", target);
+	}
+}
+
+// Builds the beam and dot layers; returns how many. Each frame the artwork is
+// uploaded again (48 KB, only while a menu is up), so nothing depends on a
+// swapchain image keeping its contents between acquisitions.
+static int
+presentPointerLayers(XrSpace space, XrCompositionLayerQuad quads[2])
+{
+	if(!g.ptrActive || g.pointerSwapchain == XR_NULL_HANDLE ||
+	   g.commandPool == VK_NULL_HANDLE)
+		return 0;
+
+	const VkDeviceSize bytes = (VkDeviceSize)kPointerTexW*kPointerTexH*4;
+	if(g.pointerStaging == VK_NULL_HANDLE){
+		if(!createBuffer(bytes, VK_BUFFER_USAGE_TRANSFER_SRC_BIT,
+		                 VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+		                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+		                 &g.pointerStaging, &g.pointerStagingMemory))
+			return 0;
+		if(vkMapMemory(g.device, g.pointerStagingMemory, 0, bytes, 0,
+		               &g.pointerStagingMapped) != VK_SUCCESS)
+			return 0;
+		VkCommandBufferAllocateInfo commandInfo = {};
+		commandInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+		commandInfo.commandPool = g.commandPool;
+		commandInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+		commandInfo.commandBufferCount = 1;
+		vkAllocateCommandBuffers(g.device, &commandInfo, &g.pointerCommand);
+		VkFenceCreateInfo fenceInfo = {};
+		fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+		vkCreateFence(g.device, &fenceInfo, nullptr, &g.pointerFence);
+	}
+	if(g.pointerStagingMapped == nullptr || g.pointerCommand == VK_NULL_HANDLE ||
+	   g.pointerFence == VK_NULL_HANDLE)
+		return 0;
+	if(g.pointerSubmissionPending){
+		// A tiny copy: it is done long before this frame comes round again.
+		if(vkWaitForFences(g.device, 1, &g.pointerFence, VK_TRUE, 4000000) != VK_SUCCESS)
+			return 0;
+		g.pointerSubmissionPending = false;
+	}
+
+	const bool bgra = (VkFormat)g.swapchainFormat == VK_FORMAT_B8G8R8A8_UNORM ||
+	                  (VkFormat)g.swapchainFormat == VK_FORMAT_B8G8R8A8_SRGB;
+	const uint8_t *atlas = pointerAtlas();
+	uint8_t *dst = (uint8_t *)g.pointerStagingMapped;
+	memcpy(dst, atlas, (size_t)bytes);
+	if(bgra)
+		for(size_t i = 0; i < (size_t)bytes; i += 4){
+			const uint8_t t = dst[i];
+			dst[i] = dst[i + 2];
+			dst[i + 2] = t;
+		}
+
+	uint32_t imageIndex = 0;
+	XrSwapchainImageAcquireInfo acquireInfo = { XR_TYPE_SWAPCHAIN_IMAGE_ACQUIRE_INFO };
+	if(XR_FAILED(xrAcquireSwapchainImage(g.pointerSwapchain, &acquireInfo, &imageIndex)))
+		return 0;
+	XrSwapchainImageWaitInfo waitInfo = { XR_TYPE_SWAPCHAIN_IMAGE_WAIT_INFO };
+	waitInfo.timeout = XR_INFINITE_DURATION;
+	XrSwapchainImageReleaseInfo releaseInfo = { XR_TYPE_SWAPCHAIN_IMAGE_RELEASE_INFO };
+	if(XR_FAILED(xrWaitSwapchainImage(g.pointerSwapchain, &waitInfo)) ||
+	   imageIndex >= g.pointerImages.size()){
+		xrReleaseSwapchainImage(g.pointerSwapchain, &releaseInfo);
+		return 0;
+	}
+
+	VkCommandBufferBeginInfo begin = {};
+	begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+	begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
+	vkResetCommandBuffer(g.pointerCommand, 0);
+	vkBeginCommandBuffer(g.pointerCommand, &begin);
+	VkImageMemoryBarrier barrier = {};
+	barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
+	barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+	barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	barrier.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED;
+	barrier.image = g.pointerImages[imageIndex];
+	barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	barrier.subresourceRange.levelCount = 1;
+	barrier.subresourceRange.layerCount = 1;
+	barrier.dstAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	vkCmdPipelineBarrier(g.pointerCommand, VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
+	                     VK_PIPELINE_STAGE_TRANSFER_BIT, 0, 0, nullptr, 0, nullptr,
+	                     1, &barrier);
+	VkBufferImageCopy region = {};
+	region.imageSubresource.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+	region.imageSubresource.layerCount = 1;
+	region.imageExtent = { (uint32_t)kPointerTexW, (uint32_t)kPointerTexH, 1 };
+	vkCmdCopyBufferToImage(g.pointerCommand, g.pointerStaging, g.pointerImages[imageIndex],
+	                       VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL, 1, &region);
+	// OpenXR wants a colour image released in COLOR_ATTACHMENT_OPTIMAL.
+	barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+	barrier.newLayout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+	barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+	barrier.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_READ_BIT |
+	                        VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+	vkCmdPipelineBarrier(g.pointerCommand, VK_PIPELINE_STAGE_TRANSFER_BIT,
+	                     VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT, 0, 0, nullptr,
+	                     0, nullptr, 1, &barrier);
+	vkEndCommandBuffer(g.pointerCommand);
+	VkSubmitInfo submit = {};
+	submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+	submit.commandBufferCount = 1;
+	submit.pCommandBuffers = &g.pointerCommand;
+	vkResetFences(g.device, 1, &g.pointerFence);
+	g.pointerSubmissionPending =
+		vkQueueSubmit(g.queue, 1, &submit, g.pointerFence) == VK_SUCCESS;
+	xrReleaseSwapchainImage(g.pointerSwapchain, &releaseInfo);
+	if(!g.pointerSubmissionPending)
+		return 0;
+
+	const XrVector3f up = { 0.0f, 1.0f, 0.0f };
+	const XrVector3f o = g.ptrOrigin, d = g.ptrDir;
+	const float missLength = 1.5f;
+	const XrVector3f end = g.ptrHit ? g.ptrHitPos : ptAdd(o, ptScale(d, missLength));
+	const XrVector3f span = ptSub(end, o);
+	const float length = sqrtf(ptDot(span, span));
+	int count = 0;
+
+	auto baseQuad = [&](XrCompositionLayerQuad &q, int rx, int ry, int rw, int rh){
+		q = { XR_TYPE_COMPOSITION_LAYER_QUAD };
+		q.layerFlags = XR_COMPOSITION_LAYER_BLEND_TEXTURE_SOURCE_ALPHA_BIT |
+		               XR_COMPOSITION_LAYER_UNPREMULTIPLIED_ALPHA_BIT;
+		q.space = space;
+		q.eyeVisibility = XR_EYE_VISIBILITY_BOTH;
+		q.subImage.swapchain = g.pointerSwapchain;
+		q.subImage.imageArrayIndex = 0;
+		q.subImage.imageRect.offset = { rx, ry };
+		q.subImage.imageRect.extent = { rw, rh };
+	};
+
+	if(length > 0.03f){
+		// A strip along the ray, turned about it so its face looks at the head.
+		const XrVector3f mid = ptScale(ptAdd(o, end), 0.5f);
+		const XrVector3f x = ptNorm(span, d);
+		const XrVector3f toHead = g.ptrHeadValid ? ptSub(g.ptrHead, mid) : up;
+		XrVector3f n = ptSub(toHead, ptScale(x, ptDot(toHead, x)));
+		if(ptDot(n, n) < 1e-8f)
+			n = ptCross(x, fabsf(x.y) < 0.9f ? up : XrVector3f{ 1.0f, 0.0f, 0.0f });
+		n = ptNorm(n, up);
+		const XrVector3f y = ptCross(n, x);
+		const XrVector3f z = ptCross(x, y);
+		baseQuad(quads[count], 128, kPointerBeamRow, 64, kPointerBeamRows);
+		quads[count].pose.orientation = ptFromAxes(x, y, z);
+		quads[count].pose.position = mid;
+		quads[count].size = { length, 0.014f };
+		++count;
+	}
+	if(g.ptrHit){
+		// The dot faces the head and stays upright about world up, so it never
+		// rolls with the head.
+		XrVector3f z = g.ptrHeadValid ? ptSub(g.ptrHead, end) : ptScale(d, -1.0f);
+		const float dist = sqrtf(ptDot(z, z));
+		z = ptNorm(z, ptScale(d, -1.0f));
+		XrVector3f x = ptCross(up, z);
+		x = ptNorm(x, XrVector3f{ 1.0f, 0.0f, 0.0f });
+		const XrVector3f y = ptCross(z, x);
+		float size = (g.ptrHeadValid ? dist : length)*0.05f;
+		size = size < 0.04f ? 0.04f : size > 0.14f ? 0.14f : size;
+		baseQuad(quads[count], g.pointerDown ? 64 : 0, 0, 64, 64);
+		quads[count].pose.orientation = ptFromAxes(x, y, z);
+		quads[count].pose.position = end;
+		quads[count].size = { size, size };
+		++count;
+	}
+	static bool logged = false;
+	if(!logged){
+		logged = true;
+		LOGI("[ui.pointer] layers active (beam + dot, submitted last)");
+	}
+	return count;
+}
+
+// vr-diag.ini dump_frame: a flat picture of what the last frame submitted, seen
+// from the head, with the layers laid down in submission order (screen, panel,
+// beam, dot) the way the compositor stacks them. It checks the geometry, the
+// blend and that the pointer ends up over the panel; it does not stand in for
+// the runtime's own compositor.
+static void
+diagDumpComposite(const char *directory, const uint8_t *eye0, uint32_t eyeW,
+                  uint32_t eyeH, bool eyeBgra)
+{
+	const State::DiagLayers &L = g.diagLayers;
+	if(!L.valid){
+		LOGW("[vr-dump] no submitted layers to composite yet");
+		return;
+	}
+	const int W = 1280, H = 720;
+	const float tanX = 1.2f, tanY = tanX*(float)H/(float)W;
+	std::vector<uint8_t> out((size_t)W*H*4);
+	const uint8_t *atlas = pointerAtlas();
+	const uint8_t *panel = (const uint8_t *)g.debugStagingMapped;
+	const bool havePanel = L.menu && panel != nullptr && g.debugContentWidth > 0 &&
+	                       g.debugContentHeight > 0;
+	for(int py = 0; py < H; py++){
+		for(int px = 0; px < W; px++){
+			const float sx = ((px + 0.5f)/W*2.0f - 1.0f)*tanX;
+			const float sy = (1.0f - (py + 0.5f)/H*2.0f)*tanY;
+			const XrVector3f d = ptNorm(ptRotate(L.head.orientation, { sx, sy, -1.0f }),
+			                            { 0.0f, 0.0f, -1.0f });
+			float r = 22, gr = 24, b = 32;
+			float t, u, v;
+			if(L.theater && eye0 != nullptr &&
+			   ptRayQuad(L.theaterPose, L.theaterSize, L.head.position, d, &t, &u, &v)){
+				const uint8_t *s = eye0 + ((size_t)(v*(eyeH - 1))*eyeW + (size_t)(u*(eyeW - 1)))*4;
+				r = s[eyeBgra ? 2 : 0]; gr = s[1]; b = s[eyeBgra ? 0 : 2];
+			}
+			if(havePanel &&
+			   ptRayQuad(L.menuPose, L.menuSize, L.head.position, d, &t, &u, &v)){
+				const int w = g.debugContentWidth, h = g.debugContentHeight;
+				const uint8_t *s = panel + ((size_t)(v*(h - 1))*w + (size_t)(u*(w - 1)))*4;
+				const float a = s[3]/255.0f;      // premultiplied, as submitted
+				r = s[0] + r*(1.0f - a); gr = s[1] + gr*(1.0f - a); b = s[2] + b*(1.0f - a);
+			}
+			for(int i = 0; i < L.pointerCount; i++){
+				if(!ptRayQuad(L.pointerPose[i], L.pointerSize[i], L.head.position, d, &t, &u, &v))
+					continue;
+				const int tx = L.pointerRect[i][0] + (int)(u*(L.pointerRect[i][2] - 1));
+				const int ty = L.pointerRect[i][1] + (int)(v*(L.pointerRect[i][3] - 1));
+				const uint8_t *s = atlas + ((size_t)ty*kPointerTexW + tx)*4;
+				const float a = s[3]/255.0f;      // straight alpha
+				r = s[0]*a + r*(1.0f - a); gr = s[1]*a + gr*(1.0f - a); b = s[2]*a + b*(1.0f - a);
+			}
+			uint8_t *o = &out[((size_t)py*W + px)*4];
+			o[0] = (uint8_t)(r > 255 ? 255 : r); o[1] = (uint8_t)(gr > 255 ? 255 : gr);
+			o[2] = (uint8_t)(b > 255 ? 255 : b); o[3] = 255;
+		}
+	}
+	char path[600];
+	snprintf(path, sizeof(path), "%s/vr-pointer.bmp", directory);
+	if(frame_diag::writeBmp24(path, out.data(), W, H, false))
+		LOGI("[vr-dump] wrote %s %dx%d (flat composite: screen=%d panel=%d pointer layers=%d)",
+		     path, W, H, L.theater ? 1 : 0, havePanel ? 1 : 0, L.pointerCount);
+}
+#endif
+
+#if MIAMIVR_STEAM_FRAME
+// ---------------------------------------------------------------------------
 // Steam Frame unattended-test diagnostics (standard.md section 8): synthetic
 // head, swapchain dump, [vr-perf]. The vr-diag.ini side is in frame_diag.
 // ---------------------------------------------------------------------------
@@ -2406,6 +2973,7 @@ diagDumpSwapchain(uint32_t imageIndex, int frameNumber)
 				LOGI("[vr-dump] wrote %s %ux%u format=%lld", path, width,
 				     height, (long long)g.swapchainFormat);
 		}
+		diagDumpComposite(directory, mapped, width, height, bgra);
 		vkUnmapMemory(g.device, memory);
 	}
 	if(commands != VK_NULL_HANDLE)
@@ -2450,7 +3018,9 @@ diagDumpSwapchain(uint32_t imageIndex, int frameNumber)
 		"theater_mode=%s\n"
 		"theater_note=%s\n"
 		"bmp_note=bytes copied as stored (no sRGB decode); rows bottom-up\n"
-		"hud=%s\n",
+		"hud=%s\n"
+		"pointer_note=vr-pointer.bmp is a flat composite of the layers the previous "
+		"frame submitted (screen, panel, beam, dot, in that order) seen from the head\n",
 		frameNumber, (long long)g.predictedDisplayTime,
 		diagSessionStateName(g.sessionState), (int)g.sessionState,
 		g.diagShouldRender ? 1 : 0,
@@ -3325,6 +3895,14 @@ setTheaterStereo(bool enabled)
 }
 
 void
+setPointerFrontend(bool up)
+{
+	if(up != g.pointerFrontendUp)
+		LOGI("[ui.pointer] frontend %s", up ? "up" : "gone");
+	g.pointerFrontendUp = up;
+}
+
+void
 resetTheaterAnchor(void)
 {
 	// The screen latches in front of the head the next theater frame.
@@ -3743,8 +4321,13 @@ renderFrame(void)
 	XrCompositionLayerProjection layer = { XR_TYPE_COMPOSITION_LAYER_PROJECTION };
 	XrCompositionLayerQuad theaterLayer = { XR_TYPE_COMPOSITION_LAYER_QUAD };
 	XrCompositionLayerQuad debugLayer = { XR_TYPE_COMPOSITION_LAYER_QUAD };
-	const XrCompositionLayerBaseHeader *layers[3] = { nullptr, nullptr, nullptr };
+	const XrCompositionLayerBaseHeader *layers[5] = {};
+#if MIAMIVR_STEAM_FRAME
+	XrCompositionLayerQuad pointerQuads[2] = { { XR_TYPE_COMPOSITION_LAYER_QUAD },
+	                                           { XR_TYPE_COMPOSITION_LAYER_QUAD } };
+#endif
 	uint32_t layerCount = 0;
+	bool menuSubmitted = false;
 
 	if((frameState.shouldRender || forceRender) &&
 	   (g.refreshRateReadyForFrames || forceRender)){
@@ -4001,7 +4584,45 @@ renderFrame(void)
 					(float)g.debugContentWidth;
 				layers[layerCount++] =
 					(const XrCompositionLayerBaseHeader *)&debugLayer;
+				menuSubmitted = fullMenu;
 			}
+
+#if MIAMIVR_STEAM_FRAME
+			// The laser pointer goes last: later layers composite over earlier
+			// ones, so the beam and dot stay above the menu panel, the cinema
+			// screen and the world. The ray is tested against the two quads
+			// exactly as they were just submitted.
+			{
+				updatePointer(views, g.theaterMode, theaterLayer.pose,
+				              menuSubmitted, debugLayer.pose, debugLayer.size);
+				const int pointerLayers =
+					presentPointerLayers(submitSpace, pointerQuads);
+				for(int i = 0; i < pointerLayers; i++)
+					layers[layerCount++] =
+						(const XrCompositionLayerBaseHeader *)&pointerQuads[i];
+				State::DiagLayers &snap = g.diagLayers;
+				snap.valid = true;
+				snap.head = views[0].pose;
+				snap.head.position.x = (views[0].pose.position.x + views[1].pose.position.x)*0.5f;
+				snap.head.position.y = (views[0].pose.position.y + views[1].pose.position.y)*0.5f;
+				snap.head.position.z = (views[0].pose.position.z + views[1].pose.position.z)*0.5f;
+				snap.theater = g.theaterMode;
+				snap.theaterPose = theaterLayer.pose;
+				snap.theaterSize = theaterLayer.size;
+				snap.menu = g.debugVisible;
+				snap.menuPose = debugLayer.pose;
+				snap.menuSize = debugLayer.size;
+				snap.pointerCount = pointerLayers;
+				for(int i = 0; i < pointerLayers; i++){
+					snap.pointerPose[i] = pointerQuads[i].pose;
+					snap.pointerSize[i] = pointerQuads[i].size;
+					snap.pointerRect[i][0] = pointerQuads[i].subImage.imageRect.offset.x;
+					snap.pointerRect[i][1] = pointerQuads[i].subImage.imageRect.offset.y;
+					snap.pointerRect[i][2] = pointerQuads[i].subImage.imageRect.extent.width;
+					snap.pointerRect[i][3] = pointerQuads[i].subImage.imageRect.extent.height;
+				}
+			}
+#endif
 		}
 	}
 
@@ -4112,6 +4733,13 @@ destroy(void)
 	if(g.debugStaging) vkDestroyBuffer(g.device, g.debugStaging, nullptr);
 	if(g.debugStagingMemory) vkFreeMemory(g.device, g.debugStagingMemory, nullptr);
 
+#if MIAMIVR_STEAM_FRAME
+	if(g.pointerFence) vkDestroyFence(g.device, g.pointerFence, nullptr);
+	if(g.pointerStagingMapped) vkUnmapMemory(g.device, g.pointerStagingMemory);
+	if(g.pointerStaging) vkDestroyBuffer(g.device, g.pointerStaging, nullptr);
+	if(g.pointerStagingMemory) vkFreeMemory(g.device, g.pointerStagingMemory, nullptr);
+	if(g.pointerSwapchain) xrDestroySwapchain(g.pointerSwapchain);
+#endif
 	if(g.debugSwapchain) xrDestroySwapchain(g.debugSwapchain);
 	if(g.swapchain) xrDestroySwapchain(g.swapchain);
 	for(int hand = 0; hand < 2; hand++){

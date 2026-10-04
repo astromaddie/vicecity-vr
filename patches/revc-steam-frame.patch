@@ -108,6 +108,83 @@ index 8d49f8e..a340ad7 100644
  	char* r = casepath(path, false);
      if (r) {
          chdir(r);
+diff --git a/src/core/Frontend.cpp b/src/core/Frontend.cpp
+index e3f74a4..f5e4069 100644
+--- a/src/core/Frontend.cpp
++++ b/src/core/Frontend.cpp
+@@ -35,6 +35,17 @@
+ #include "FileLoader.h"
+ #include "User.h"
+ #include "sampman.h"
++#if defined(RW_VULKAN) && defined(__ANDROID__) && MIAMIVR_STEAM_FRAME
++namespace androidgame {
++bool VrFrontendPointerOwnsCursor(void);
++}
++// The laser pointer's dot is the cursor while it is on the frontend; the game's
++// own 2D mouse sprite would draw a second one beside it. m_bShowMouse itself is
++// left alone, because hover and the map crosshair read it.
++#define MOUSE_CURSOR_DRAWN (m_bShowMouse && !androidgame::VrFrontendPointerOwnsCursor())
++#else
++#define MOUSE_CURSOR_DRAWN m_bShowMouse
++#endif
+ #if defined(GTA_VR_OCULUS) || defined(GTA_VR_WEAPONS)
+ #include "OculusVR.h"
+ #endif
+@@ -2519,7 +2530,7 @@ CMenuManager::DrawBackground(bool transitionCall)
+ 		}
+ 	}
+ 
+-	if (m_bShowMouse) {
++	if (MOUSE_CURSOR_DRAWN) {
+ 		CRect mouse(0.0f, 0.0f, MENU_X(35.0f), MENU_Y(35.0f));
+ 		CRect shad(MENU_X(10.0f), MENU_Y(3.0f), MENU_X(45.0f), MENU_Y(38.0f));
+ 
+diff --git a/src/core/Pad.cpp b/src/core/Pad.cpp
+index 9cfc605..6e648e9 100644
+--- a/src/core/Pad.cpp
++++ b/src/core/Pad.cpp
+@@ -21,6 +21,11 @@ bool VrStickLookBehindEnabled(void);
+ bool VrStickCrouchEnabled(void);
+ }
+ #endif
++#if defined(RW_VULKAN) && defined(__ANDROID__) && MIAMIVR_STEAM_FRAME
++namespace androidgame {
++bool VrFrontendPointer(int *x, int *y, bool *leftButton, int *wheel);
++}
++#endif
+ #include "ControllerConfig.h"
+ #include "Timer.h"
+ #include "Frontend.h"
+@@ -1711,6 +1716,29 @@ void CPad::UpdateMouse()
+ 		OldMouseControllerState = NewMouseControllerState;
+ 		NewMouseControllerState = PCTempMouseControllerState;
+ 	}
++#elif defined(RW_VULKAN) && defined(__ANDROID__) && MIAMIVR_STEAM_FRAME
++	// Steam Frame: the laser pointer is the mouse while the frontend is open.
++	PCTempMouseControllerState.Clear();
++	if ( FrontEndMenuManager.m_bMenuActive )
++	{
++		int32 x = -1, y = -1, wheel = 0;
++		bool leftButton = false;
++		if ( androidgame::VrFrontendPointer(&x, &y, &leftButton, &wheel) )
++		{
++			if ( x >= 0 )
++			{
++				FrontEndMenuManager.m_nMouseTempPosX = x;
++				FrontEndMenuManager.m_nMouseTempPosY = y;
++			}
++			PCTempMouseControllerState.LMB = leftButton;
++			if ( wheel > 0 )
++				PCTempMouseControllerState.WHEELUP = 1;
++			else if ( wheel < 0 )
++				PCTempMouseControllerState.WHEELDN = 1;
++		}
++	}
++	OldMouseControllerState = NewMouseControllerState;
++	NewMouseControllerState = PCTempMouseControllerState;
+ #else
+ 	// Android/Quest: no mouse. Pointer-driven menu navigation is replaced by
+ 	// the in-headset VR menus, so the mouse state is simply never updated.
 diff --git a/src/core/main.cpp b/src/core/main.cpp
 index 45c438b..eb49a37 100644
 --- a/src/core/main.cpp

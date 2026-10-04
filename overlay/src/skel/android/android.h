@@ -73,8 +73,28 @@ struct PadInput
 	// person; unbound in first person).
 	bool leftBumper, rightBumper;
 	bool viewBack;
+	// Menu laser pointer (xr_vulkan_session.h): the right trigger as a click
+	// (hysteresis 0.6 / 0.45), and where the right aim ray lands, 0..1 across
+	// the theater screen (frontend) or the VR menu panel, v from the top.
+	bool pointerPressed;
+	bool pointerFrontend;
+	float frontendU, frontendV;
+	bool pointerMenu;
+	float menuU, menuV;
 #endif
 };
+
+#if MIAMIVR_STEAM_FRAME
+// The frontend's mouse, driven by the laser pointer. CPad::UpdateMouse asks
+// once per frame while the frontend is open. Fills the cursor position in
+// screen pixels (RsGlobal.width x height), the left button and a one-frame
+// wheel pulse (+1 up, -1 down, from the right stick); false when the pointer
+// has nothing to say, in which case the mouse stays idle.
+bool VrFrontendPointer(int *x, int *y, bool *leftButton, int *wheel);
+// True while the pointer is on the frontend. The game's own 2D mouse cursor is
+// not drawn then: the pointer's dot is the cursor, and two would double up.
+bool VrFrontendPointerOwnsCursor(void);
+#endif
 
 // Controller remapping. Every physical Touch input the game reads as a plain
 // button drives one of Vice City's pad buttons, and the CONTROLS page of the VR

@@ -31,6 +31,21 @@ struct Config
 	// Start a new game from the title menu without input, once, so the
 	// opening cutscenes and loads can be tested with nobody wearing it.
 	bool newGame = false;
+	// Menu laser pointer test. With force_render and nobody wearing the
+	// headset there is no aim pose, so this parks a synthetic right-hand ray
+	// on a point of a surface: 1 = the theater screen (the frontend), 2 = the
+	// VR menu panel. diag_pointer_u / _v are 0..1 across it, v from the top.
+	// dump_frame then also writes vr-pointer.bmp, a flat composite of the
+	// submitted layers in submission order (screen, panel, beam, dot).
+	int pointerTarget = 0;
+	float pointerU = 0.5f;
+	float pointerV = 0.5f;
+	// Open the VR settings menu by itself a few seconds in, as both grips plus
+	// Menu would, so the panel can be dumped with nobody to press it. Its
+	// value is the page to open on, counting the menu's pages from 1: 1 is the
+	// settings list, 2 GRAPHICS, 3 LIGHTING, 4 WATER, 5 WEAPONS, 6 HUD, and so on
+	// in the order of the VR_MENU_PAGE_ enum in vrdebug.cpp.
+	int openVrMenu = 0;
 };
 
 // Reads <storageRoot>/vr-diag.ini. Call once after the storage root is set;

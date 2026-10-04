@@ -1297,6 +1297,101 @@ VrUpdateFirstPersonAnchor(bool postPhysics)
 	}
 }
 
+#if MIAMIVR_STEAM_FRAME
+// ---------------------------------------------------------------------------
+// Laser pointer -> the PC frontend's mouse (the Steam Frame docs).
+//
+// CMenuManager reads the mouse from two places: the cursor position, taken from
+// m_nMouseTempPosX/Y (win.cpp and glfw.cpp write those from their window
+// callbacks) and the buttons, taken from CPad's mouse state (CPad::UpdateMouse
+// fills it from the OS). This feeds both from the right aim ray. The theater
+// screen shows the whole of the game's screen, so a hit at (u, v) is the pixel
+// (u * RsGlobal.width, v * RsGlobal.height): the same mapping makeTheaterMatrices
+// gives the 2D plane. Hover then highlights an item and a trigger click is a
+// left click, with sliders working because they read the same mouse X.
+// ---------------------------------------------------------------------------
+static bool gFrontendPointerOnScreen;
+
+bool
+androidgame::VrFrontendPointerOwnsCursor(void)
+{
+	return gFrontendPointerOnScreen;
+}
+
+bool
+androidgame::VrFrontendPointer(int *x, int *y, bool *leftButton, int *wheel)
+{
+	const PadInput &in = gPadInput;
+	*x = *y = -1;
+	*leftButton = false;
+	*wheel = 0;
+
+	// The right stick scrolls, as a wheel: one pulse on the push, then a repeat
+	// while it is held.
+	static int wheelHeld;
+	if(Abs(in.rightStickY) > 0.6f){
+		++wheelHeld;
+		if(wheelHeld == 1 || (wheelHeld > 24 && wheelHeld % 8 == 0))
+			*wheel = in.rightStickY > 0.0f ? 1 : -1;
+	}else
+		wheelHeld = 0;
+
+	static bool frozen, prevPressed;
+	static float frozenU, frozenV;
+	static int lastX = -1, lastY = -1, hoverKey = -1;
+	const bool onScreen = in.pointerFrontend;
+	gFrontendPointerOnScreen = onScreen;
+	if(!onScreen){
+		frozen = false;
+		prevPressed = false;
+		hoverKey = -1;
+		return *wheel != 0;
+	}
+
+	// Pad navigation has to keep working with a ray resting on the screen. A
+	// mouse that moves picks the item under it, and a hand never holds still, so
+	// while the pad is used the cursor stays where it was and the ray has to
+	// travel a good way before it takes over again. A click takes over at once.
+	const bool padNavigating =
+		Abs(in.leftStickX) > 0.5f || Abs(in.leftStickY) > 0.5f ||
+		in.dpadUp || in.dpadDown || in.dpadLeft || in.dpadRight || in.a;
+	if(padNavigating && !frozen && !in.pointerPressed){
+		frozen = true;
+		frozenU = in.frontendU;
+		frozenV = in.frontendV;
+	}
+	if(frozen){
+		const float du = in.frontendU - frozenU;
+		const float dv = (in.frontendV - frozenV)*0.5625f;
+		if(du*du + dv*dv > 0.05f*0.05f || in.pointerPressed)
+			frozen = false;
+	}
+
+	const float w = RsGlobal.width > 0 ? (float)RsGlobal.width : 1.0f;
+	const float h = RsGlobal.height > 0 ? (float)RsGlobal.height : 1.0f;
+	if(!frozen || lastX < 0){
+		lastX = (int)clamp(in.frontendU*w, 0.0f, w);
+		lastY = (int)clamp(in.frontendV*h, 0.0f, h);
+	}
+	*x = lastX;
+	*y = lastY;
+	*leftButton = in.pointerPressed;
+
+	if(in.pointerPressed && !prevPressed)
+		xrvk::triggerHaptic(1, 0.5f, 0.0f, 30.0f);                 // ui_click
+	prevPressed = in.pointerPressed;
+	if(!frozen){
+		const int key = ((int)FrontEndMenuManager.m_nCurrScreen << 12) |
+			(((int)FrontEndMenuManager.m_nHoverOption & 0x3f) << 6) |
+			((int)FrontEndMenuManager.m_nOptionMouseHovering & 0x3f);
+		if(hoverKey >= 0 && key != hoverKey)
+			xrvk::triggerHaptic(1, 0.2f, 0.0f, 10.0f);             // ui_hover
+		hoverKey = key;
+	}
+	return true;
+}
+#endif
+
 // XINPUT is off on this platform, so CPad routes through CapturePad. This is
 // the same seam the desktop build uses to inject tracked-controller state.
 static bool gQuestSnapTurnStickLatched;
@@ -1537,6 +1632,13 @@ CapturePad(RwInt32 padID)
 	androidgame::PadInput bound = in;
 	if(remoteMode)
 		bound.a = false;
+#if MIAMIVR_STEAM_FRAME
+	// With the ray on the frontend the trigger is the mouse's left button (see
+	// VrFrontendPointer); it must not also be Cross, which would confirm the
+	// highlighted item a second time.
+	if(FrontEndMenuManager.m_bMenuActive && in.pointerFrontend)
+		bound.rightTrigger = 0.0f;
+#endif
 	// Every mapped button goes through the binding table, so the CONTROLS page
 	// can move it on foot. Trigger and grip routing is the desktop VR layer's
 	// default: the right trigger is the accelerator (Cross), the left is

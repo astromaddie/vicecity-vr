@@ -92,6 +92,36 @@ applyKey(const char *key, const char *value)
 		}
 		gConfig.newGame = number != 0;
 		LOGI("[vr] diag diag_new_game=%d", gConfig.newGame ? 1 : 0);
+	}else if(strcmp(key, "diag_pointer") == 0){
+		if(strcmp(value, "frontend") == 0 || strcmp(value, "1") == 0)
+			gConfig.pointerTarget = 1;
+		else if(strcmp(value, "vrmenu") == 0 || strcmp(value, "2") == 0)
+			gConfig.pointerTarget = 2;
+		else if(strcmp(value, "none") == 0 || strcmp(value, "0") == 0)
+			gConfig.pointerTarget = 0;
+		else{
+			LOGW("[vr] diag bad value for %s: '%s' (ignored)", key, value);
+			return;
+		}
+		LOGI("[vr] diag diag_pointer=%d", gConfig.pointerTarget);
+	}else if(strcmp(key, "diag_pointer_u") == 0 ||
+	         strcmp(key, "diag_pointer_v") == 0){
+		if(!parseFloat(value, &real) || real < 0.0f || real > 1.0f){
+			LOGW("[vr] diag bad value for %s: '%s' (ignored)", key, value);
+			return;
+		}
+		if(key[strlen(key) - 1] == 'u')
+			gConfig.pointerU = real;
+		else
+			gConfig.pointerV = real;
+		LOGI("[vr] diag %s=%g", key, (double)real);
+	}else if(strcmp(key, "diag_vr_menu") == 0){
+		if(!parseInt(value, &number) || number < 0 || number > 19){
+			LOGW("[vr] diag bad value for %s: '%s' (ignored)", key, value);
+			return;
+		}
+		gConfig.openVrMenu = (int)number;
+		LOGI("[vr] diag diag_vr_menu=%d", gConfig.openVrMenu);
 	}else
 		LOGW("[vr] diag unknown key '%s' (ignored)", key);
 }

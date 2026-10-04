@@ -18,6 +18,9 @@
 #include "VehicleVisualDirector.h"
 #include "VehicleDeformation.h"
 #include "xr_vulkan_session.h"
+#if MIAMIVR_STEAM_FRAME
+#include "frame_diag.h"
+#endif
 #include "WeaponType.h"
 #include "IniFile.h"
 #include "Population.h"
@@ -42,6 +45,9 @@
 #include "Timer.h"
 #include "crossplatform.h"
 #include <android/log.h>
+#ifndef LOGI
+#define LOGI(...) __android_log_print(ANDROID_LOG_INFO, "MiamiVR", __VA_ARGS__)
+#endif
 
 extern int GetVrCheatCount(void);
 extern const char *GetVrCheatName(int index);
@@ -545,6 +551,20 @@ enum {
 	VR_MENU_PAGE_MISSIONS,
 	VR_MENU_PAGE_ABOUT,
 };
+
+#if MIAMIVR_STEAM_FRAME
+// The rows the page drawn last put on the 1024x768 panel, in the order they were
+// drawn, for the laser pointer. DrawFullVrMenuRow records each one (its text y
+// and which was drawn selected), so whatever a page does to hide rows, window a
+// long list or scroll needs no layout of its own here: the pointer works on what
+// is on the panel. gVrRowPage says which page they belong to.
+static const int kVrRowMax = 64;
+static int gVrRowY[kVrRowMax];
+static int gVrRowScale[kVrRowMax];
+static int gVrRowCount;
+static int gVrRowSelected = -1;
+static int gVrRowPage = -1;
+#endif
 
 enum eVrLightingMenuItem {
 	VR_LIGHTING_MODE = 0,
@@ -2277,6 +2297,23 @@ VrDebugUpdate(const PadInput &in)
 	// the persisted headset values authoritative after that later load too.
 	ApplyTrafficSettings();
 	const double now = MonotonicMilliseconds();
+#if MIAMIVR_STEAM_FRAME
+	{
+		// vr-diag.ini diag_vr_menu: open the panel by itself once, as the chord
+		// would, so it can be dumped with nobody wearing the headset.
+		static int diagFrames;
+		static bool diagOpened;
+		const int diagPage = frame_diag::config().openVrMenu;
+		if(diagPage > 0 && !diagOpened && ++diagFrames >= 240){
+			diagOpened = true;
+			gVrMenuVisible = true;
+			gVrMenuPage = diagPage-1;
+			gVrMenuSelection = 0;
+			gVrWelcomePending = false;
+			LOGI("[ui.pointer] diag opened VR menu page %d", gVrMenuPage);
+		}
+	}
+#endif
 	if(gVrWelcomePending && DidPlayerTakeWelcomeStep(in)){
 		gVrWelcomePending = false;
 		gVrMenuVisible = true;
@@ -2477,21 +2514,101 @@ VrDebugUpdate(const PadInput &in)
 		gVrCheatCycleDown = cheatCycle;
 
 		const bool select = in.a || in.rightStickClick;
-		const bool selectPulse = select && !gVrMenuSelectDown;
+		bool ptrEnter = false, ptrPlusHeld = false, ptrMinusHeld = false;
+		bool ptrOwnsTrigger = false;
+#if MIAMIVR_STEAM_FRAME
+		// Laser pointer on the panel. Hovering a row selects it, but only when
+		// the hovered row changes, so the left stick keeps working while the ray
+		// rests somewhere. A trigger click on the middle of a row is A; on the
+		// outer 16% at either side it steps the value down (left) or up (right),
+		// and holding it repeats like L2 and R2 do. While the ray is on the
+		// panel the right trigger is the click and no longer R2 "plus".
+		{
+			static int lastSig = -1, settle = 0, prevRow = -1;
+			static bool prevPressed = false, heldFromPanel = false;
+			const bool onPanel = in.pointerMenu;
+			const bool clickEdge = onPanel && in.pointerPressed && !prevPressed;
+			prevPressed = onPanel && in.pointerPressed;
+			if(clickEdge)
+				heldFromPanel = true;
+			if(!in.pointerPressed)
+				heldFromPanel = false;
+			// A hover worked out against rows that have since changed (a page
+			// change, a list switching to its entries) must not land on the new
+			// ones: ignore the pointer for a few frames after the layout moves.
+			const int sig = gVrMenuPage*100003 + gVrRowCount*131 +
+				(gVrRowCount > 0 ? gVrRowY[0] + gVrRowScale[0]*7 : 0);
+			if(sig != lastSig){
+				lastSig = sig;
+				settle = 3;
+				prevRow = -1;
+			}else if(settle > 0)
+				--settle;
+			int row = -1;
+			if(onPanel && settle == 0 && gVrRowPage == gVrMenuPage &&
+			   gVrRowCount > 0 && in.menuU > 0.03f && in.menuU < 0.97f){
+				const float py = in.menuV*(float)VR_MENU_HEIGHT;
+				for(int k = 0; k < gVrRowCount; k++){
+					const int top = gVrRowY[k]-5;
+					const int bottom = k+1 < gVrRowCount ? gVrRowY[k+1]-5 :
+						top+(k > 0 ? gVrRowY[k]-gVrRowY[k-1] : 30);
+					if(py >= (float)top && py < (float)bottom){
+						row = k;
+						break;
+					}
+				}
+			}
+			if(row >= 0 && (row != prevRow || clickEdge) &&
+			   gVrRowSelected >= 0 && row != gVrRowSelected){
+				// Walk the selection to the hovered row the way the stick
+				// would: through the visible rows, which are the drawn ones.
+				const int itemCount = CurrentMenuItemCount();
+				const int direction = row > gVrRowSelected ? 1 : -1;
+				int *selection = CurrentMenuSelection();
+				for(int step = Abs(row-gVrRowSelected);
+				    step > 0 && itemCount > 0; step--){
+					int guard = itemCount;
+					do{
+						*selection = (*selection+direction+itemCount) %
+							itemCount;
+					}while(!IsMenuItemVisible(gVrMenuPage, *selection) &&
+					       --guard > 0);
+				}
+			}
+			if(row >= 0 && row != prevRow)
+				xrvk::triggerHaptic(1, 0.2f, 0.0f, 10.0f);      // ui_hover
+			prevRow = row;
+			if(clickEdge)
+				xrvk::triggerHaptic(1, 0.5f, 0.0f, 30.0f);      // ui_click
+			ptrPlusHeld = row >= 0 && in.pointerPressed && heldFromPanel &&
+				in.menuU > 0.84f;
+			ptrMinusHeld = row >= 0 && in.pointerPressed && heldFromPanel &&
+				in.menuU < 0.16f;
+			ptrEnter = clickEdge && row >= 0 && !ptrPlusHeld && !ptrMinusHeld;
+			if(clickEdge && row >= 0)
+				LOGI("[ui.pointer] vrmenu page=%d row=%d %s", gVrMenuPage, row,
+				     ptrEnter ? "activate" : (ptrPlusHeld ? "plus" : "minus"));
+			ptrOwnsTrigger = onPanel || heldFromPanel;
+		}
+#endif
+		const bool plusDown =
+			(in.rightTrigger >= 0.55f && !ptrOwnsTrigger) || ptrPlusHeld;
+		const bool minusDown = in.leftTrigger >= 0.55f || ptrMinusHeld;
+		const bool selectPulse = (select && !gVrMenuSelectDown) || ptrEnter;
 		gVrMenuSelectDown = select;
 		const bool repeatValue = CurrentMenuValueRepeats();
 		const bool increasePulse = MenuRepeatPulse(
-			in.rightTrigger >= 0.55f, gVrMenuIncreaseDown,
+			plusDown, gVrMenuIncreaseDown,
 			gVrMenuIncreaseRepeatAt, gVrMenuIncreaseHoldStart,
 			now, repeatValue);
 		const bool decreasePulse = MenuRepeatPulse(
-			in.leftTrigger >= 0.55f, gVrMenuDecreaseDown,
+			minusDown, gVrMenuDecreaseDown,
 			gVrMenuDecreaseRepeatAt, gVrMenuDecreaseHoldStart,
 			now, repeatValue);
 		const int repeatMagnitude = decreasePulse ?
-			MenuRepeatMagnitude(in.leftTrigger >= 0.55f,
+			MenuRepeatMagnitude(minusDown,
 				gVrMenuDecreaseHoldStart, now) :
-			MenuRepeatMagnitude(in.rightTrigger >= 0.55f,
+			MenuRepeatMagnitude(plusDown,
 				gVrMenuIncreaseHoldStart, now);
 		const bool positivePulse = selectPulse || increasePulse;
 
@@ -3492,6 +3609,15 @@ DrawFullVrMenuRow(const char *text, int y, int scale, bool selected,
                   bool available = true, bool warning = false,
                   bool positive = false, bool highlight = false)
 {
+#if MIAMIVR_STEAM_FRAME
+	if(gVrRowCount < kVrRowMax){
+		gVrRowY[gVrRowCount] = y;
+		gVrRowScale[gVrRowCount] = scale;
+		if(selected && gVrRowSelected < 0)
+			gVrRowSelected = gVrRowCount;
+		++gVrRowCount;
+	}
+#endif
 	// A row worth finding on a page where every line reads alike, in
 	// the title pink because nothing else on a page uses it.
 	if(highlight){
@@ -4734,6 +4860,10 @@ VrDebugPixels(int *width, int *height)
 		return nil;
 
 	if(gVrMenuVisible){
+#if MIAMIVR_STEAM_FRAME
+		gVrRowCount = 0;            // DrawFullVrMenuRow records the rows below
+		gVrRowSelected = -1;
+#endif
 		switch(gVrMenuPage){
 		case VR_MENU_PAGE_GRAPHICS:
 			DrawQuestGraphicsPage();
@@ -4796,6 +4926,9 @@ VrDebugPixels(int *width, int *height)
 			DrawQuestSettingsPage();
 			break;
 		}
+		#if MIAMIVR_STEAM_FRAME
+		gVrRowPage = gVrMenuPage;
+#endif
 		return gVrMenuPixels;
 	}
 

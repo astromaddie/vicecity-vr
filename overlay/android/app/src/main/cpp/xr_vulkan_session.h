@@ -152,6 +152,17 @@ struct ControllerInput
 	bool dpadUp, dpadDown, dpadLeft, dpadRight;
 	bool leftBumper, rightBumper;
 	bool systemRecentre;
+	// Menu laser pointer: the right aim ray tested against the theater screen
+	// (while setPointerFrontend(true)) and the VR menu panel, nearest hit wins.
+	// u and v are 0..1 across the surface, v from the top. The result is the
+	// previous frame's, because the game reads its input before the layers it
+	// is tested against are built. pointerPressed is the right trigger with
+	// 0.6 / 0.45 hysteresis and is set whether or not anything is hit.
+	bool pointerPressed;
+	bool pointerFrontend;
+	float frontendU, frontendV;
+	bool pointerMenu;
+	float menuU, menuV;
 #endif
 };
 
@@ -207,6 +218,12 @@ constexpr float kTheaterScreenHeight = 1.44f;
 // 3D cinema: show each eye its own array layer on the theater screen instead
 // of layer 0 to both. Takes effect with the next submitted frame.
 void setTheaterStereo(bool enabled);
+
+// Tells the session whether the game's frontend (main menu, pause menu,
+// options) is what the theater screen is showing. Only then is the screen a
+// pointer target; gameplay, cutscenes and loading screens leave it out. The VR
+// menu panel is a target whenever it is up.
+void setPointerFrontend(bool up);
 
 // Drops the theater screen's latched placement, so it is set again in front
 // of the head on the next theater frame. A recentre of a screen the player

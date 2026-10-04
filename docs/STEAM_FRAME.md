@@ -179,3 +179,23 @@ their game. Check first, for example with
 | Third-person view: both styles and the View toggle | **worn**, toggled repeatedly in the log (2026-10-03); per-control feedback not given |
 | Freeze at the third intro scene load (17:32, 2026-10-03) | seen once; the next new game loaded in 0.07 s. **Open**: the watchdog now logs `[vr-stall]` traces |
 | Individual controls, colours, performance | not yet reported |
+
+## Menu pointer
+
+The right controller's ray works as a mouse in the game's menus (main menu,
+pause, options) and as a pointer in the VR menu. Point to highlight, pull the
+trigger to click. On a VR menu row, clicking near the left or right edge steps
+the value down or up. The D-pad and A still work. The beam and dot go to
+SteamVR as the last two layers, so they always sit on top of the menu, the
+cinema screen and the world. Host build only, not worn yet.
+
+Test switches in `vr-diag.ini`: `diag_pointer=frontend|vrmenu` with
+`diag_pointer_u` / `diag_pointer_v` parks a ray on that surface,
+`diag_vr_menu=N` opens VR menu page N, and `dump_frame` also writes
+`vr-pointer.bmp`, a flat composite of the layers in order.
+
+## Known issue (2026-10-05)
+
+The Steam-in-place data build has not booted on the Frame yet. Its first
+unattended run never reached a game, and the cause is still being looked at.
+The headset keeps running the previous build until that's fixed.

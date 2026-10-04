@@ -434,6 +434,13 @@ renderGameFrame(VkImage image, VkImageView view, const float viewProj[2][16],
 	pad.leftBumper = controllers.leftBumper;
 	pad.rightBumper = controllers.rightBumper;
 	pad.viewBack = updateFrameSystemLayer(controllers);
+	pad.pointerPressed = controllers.pointerPressed;
+	pad.pointerFrontend = controllers.pointerFrontend;
+	pad.frontendU = controllers.frontendU;
+	pad.frontendV = controllers.frontendV;
+	pad.pointerMenu = controllers.pointerMenu;
+	pad.menuU = controllers.menuU;
+	pad.menuV = controllers.menuV;
 #endif
 	for(int hand = 0; hand < 2; hand++){
 		for(int axis = 0; axis < 3; axis++){
@@ -540,6 +547,10 @@ renderGameFrame(VkImage image, VkImageView view, const float viewProj[2][16],
 	// present an immersive-rendered image as a flat quad for one frame.
 	const bool theaterAfter = androidgame::VrShouldUseTheaterMode();
 	const bool theaterFrame = theaterBefore;
+#if MIAMIVR_STEAM_FRAME
+	// The frontend is a pointer target while it is what the screen shows.
+	xrvk::setPointerFrontend(theaterFrame && FrontEndMenuManager.m_bMenuActive);
+#endif
 
 	// A cutscene can end inside Step.  That transition frame was prepared
 	// above with the theater identity head pose, so first-person gameplay may

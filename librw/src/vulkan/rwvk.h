@@ -250,6 +250,13 @@ void setSgsrHorizontalFovDegrees(float32 degrees);
 void setIm2DTransform(const float32 transform[16], float32 planeDistance,
                       const float32 eye[3]);
 
+// Overrides the plane world sprites (vertices carrying a real camera depth:
+// coronas, flares, the aim marker) land on. The interface keeps the plane
+// from setIm2DTransform. Lets the app roll the HUD out while the sprites keep
+// the full head frame the game projected them through. Until it is called
+// the sprites follow setIm2DTransform.
+void setIm2DSpriteTransform(const float32 transform[16]);
+
 // Scales immediate-mode UI vertices around the render-target centre. The game
 // enables this only while drawing the immersive gameplay interface, keeping
 // world-space sprites and theater/menu frames on their exact projection.

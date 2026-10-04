@@ -177,9 +177,17 @@ void getInput(ControllerInput *out);
 // camera and sprite mathematics the way the desktop VR layer does.
 // im2dDistance is where that plane sits, needed to turn a vertex's own depth
 // back into a world position.
+// im2dWorld follows head yaw and pitch but never roll (standard.md section 4),
+// so the interface and crosshair stay upright when the head tilts.
+// im2dSpriteWorld is the same plane with the full head frame, roll included:
+// world sprites (coronas and the like) are projected by the game through a
+// camera that carries the roll, and need it to land on their source. The game
+// counter-rolls their corners so they still draw upright.
 typedef void (*FrameRenderer)(VkImage image, VkImageView view,
                               const float viewProj[2][16],
-                              const float im2dWorld[16], float im2dDistance,
+                              const float im2dWorld[16],
+                              const float im2dSpriteWorld[16],
+                              float im2dDistance,
                               const float headPos[3], float headYaw,
                               const float headQuat[4], float eyeFovDeg,
                               const float eyePos[2][3],

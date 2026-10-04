@@ -62,6 +62,7 @@ contains `Frame`, because `minSdk` cannot vary per build type.
 
 | Draw | VR rule in this port |
 | --- | --- |
+| Head roll (Frame build) | The HUD plane, crosshair and sights follow head yaw and pitch only, never roll. World sprites (coronas, flares, particles) sit on a second plane that keeps the full head pose, so they still land on their lights, and each sprite is counter-rotated by the head roll every frame (`CSprite::UpdateVrRoll`). The VR menu is world-locked with a yaw-only anchor set when it opens and on recentre. The log prints `[vr] roll-free billboards/HUD` at startup. Host build only, not worn |
 | World | Multiview stereo, per-eye view-projection from the runtime FOV. Culling is stereo-aware by default ("stereo safe"), with OFF as a fallback |
 | HUD (Im2D) | Projected per eye onto a plane 2 m from the head inside the multiview pass |
 | Map, status, clock, ammo | Wrist panels rendered to small textures and placed on the arm |

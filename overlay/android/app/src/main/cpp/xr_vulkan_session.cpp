@@ -161,6 +161,28 @@ worldFromPose(const XrPosef &pose)
 	return r;
 }
 
+// The head orientation with its roll taken out: yaw about +Y, then pitch about
+// the resulting right axis. Looking straight up or down leaves yaw undefined,
+// so the last good one is held through that.
+XrQuaternionf
+rollFreeOrientation(const XrQuaternionf &q, float *yawHold)
+{
+	const float fx = -(2.0f*(q.x*q.z + q.y*q.w));
+	const float fy = -(2.0f*(q.y*q.z - q.x*q.w));
+	const float fz = -(1.0f - 2.0f*(q.x*q.x + q.y*q.y));
+	if(fx*fx + fz*fz > 0.0025f)
+		*yawHold = atan2f(-fx, -fz);
+	const float pitch = asinf(fy < -1.0f ? -1.0f : (fy > 1.0f ? 1.0f : fy));
+	const float cy = cosf(*yawHold*0.5f), sy = sinf(*yawHold*0.5f);
+	const float cx = cosf(pitch*0.5f), sx = sinf(pitch*0.5f);
+	XrQuaternionf out;
+	out.x = cy*sx;
+	out.y = sy*cx;
+	out.z = -sy*sx;
+	out.w = cy*cx;
+	return out;
+}
+
 // Maps screen pixel coordinates onto a quad of the given size, centred a fixed
 // distance ahead of the head. Screen Y grows downward, hence the negative Y
 // scale; the plane sits at -Z because that is forward in OpenXR view space.
@@ -375,6 +397,15 @@ struct State
 	bool theaterAnchorValid = false;
 	XrSpace theaterSpace = XR_NULL_HANDLE;
 	XrPosef theaterPose = {};
+	// Yaw the roll-free HUD plane last had a defined heading at; see
+	// rollFreeOrientation.
+	float hudYawHold = 0.0f;
+	// The VR menu is a world-locked panel: where the head was (position and
+	// yaw only) when it opened or the player recentred.
+	bool menuAnchorValid = false;
+	XrSpace menuSpace = XR_NULL_HANDLE;
+	float menuYaw = 0.0f;
+	XrVector3f menuHeadPos = {};
 
 	// XR_META_performance_metrics is the authoritative Quest-side app timing
 	// source. Vulkan timestamps remain useful because they isolate this
@@ -2528,10 +2559,28 @@ renderLayer(const XrView views[2])
 		float viewWindowX = 0.6f, viewWindowY = 0.6f;
 		androidgame::GetIm2DViewWindow(&viewWindowX, &viewWindowY);
 		const float im2dDistance = 2.0f;
-		const Mat4 im2dWorld = im2dPlane(head, (float)g.renderWidth,
+		const Mat4 im2dSpriteWorld = im2dPlane(head, (float)g.renderWidth,
+		                                       (float)g.renderHeight,
+		                                       im2dDistance,
+		                                       2.0f*im2dDistance*viewWindowX,
+		                                       2.0f*im2dDistance*viewWindowY);
+#if MIAMIVR_STEAM_FRAME
+		// The HUD, crosshair and sights follow yaw and pitch but never roll.
+		XrPosef hudHead = head;
+		hudHead.orientation = rollFreeOrientation(head.orientation,
+		                                          &g.hudYawHold);
+		const Mat4 im2dWorld = im2dPlane(hudHead, (float)g.renderWidth,
 		                                 (float)g.renderHeight, im2dDistance,
 		                                 2.0f*im2dDistance*viewWindowX,
 		                                 2.0f*im2dDistance*viewWindowY);
+		static bool reportedRollFree = false;
+		if(!reportedRollFree){
+			reportedRollFree = true;
+			LOGI("[vr] roll-free billboards/HUD");
+		}
+#else
+		const Mat4 im2dWorld = im2dSpriteWorld;
+#endif
 		const float headPos[3] = {
 			head.position.x, head.position.y, head.position.z
 		};
@@ -2563,7 +2612,7 @@ renderLayer(const XrView views[2])
 		const long long gameStartNs = diagNowNs();
 #endif
 		g.frameRenderer(image.image, image.view, matrices, im2dWorld.m,
-		                im2dDistance, headPos, headYaw, headQuat, eyeFovDeg,
+		                im2dSpriteWorld.m, im2dDistance, headPos, headYaw, headQuat, eyeFovDeg,
 		                eyePos, eyeQuat);
 #if MIAMIVR_STEAM_FRAME
 		gPerf.gameMs = (float)((diagNowNs() - gameStartNs)*1e-6);
@@ -3126,6 +3175,9 @@ setDebugOverlay(const unsigned char *rgba, int width, int height)
 	const bool sameContentSize =
 		width == g.debugContentWidth && height == g.debugContentHeight;
 	g.debugVisible = rgba != nullptr && validSize;
+	// The menu panel is placed in the world each time it opens.
+	if(!g.debugVisible || !wasVisible)
+		g.menuAnchorValid = false;
 	if(rgba == nullptr || g.debugSwapchain == XR_NULL_HANDLE ||
 	   g.commandPool == VK_NULL_HANDLE || !validSize)
 		return;
@@ -3277,6 +3329,8 @@ resetTheaterAnchor(void)
 {
 	// The screen latches in front of the head the next theater frame.
 	g.theaterAnchorValid = false;
+	// So does the VR menu panel.
+	g.menuAnchorValid = false;
 }
 #endif
 
@@ -3870,7 +3924,7 @@ renderFrame(void)
 				layerCount = 1;
 			}
 
-			// Head-locked debug overlay: pose and size are the desktop's.
+			// Debug overlay and VR menu: size and distance are the desktop's.
 			if(g.debugVisible && g.debugSwapchain != XR_NULL_HANDLE &&
 			   g.viewSpace != XR_NULL_HANDLE){
 				const bool fullMenu = g.debugContentWidth > 512;
@@ -3885,6 +3939,61 @@ renderFrame(void)
 				debugLayer.pose.orientation.w = 1.0f;
 				debugLayer.pose.position.y = fullMenu ? 0.0f : -0.24f;
 				debugLayer.pose.position.z = fullMenu ? -1.65f : -1.5f;
+#if MIAMIVR_STEAM_FRAME
+				// Never roll with the head (standard.md sections 3 and 4).
+				// Head position and orientation, as for the theater anchor.
+				XrPosef menuHead = views[0].pose;
+				menuHead.position.x =
+					(views[0].pose.position.x + views[1].pose.position.x)*0.5f;
+				menuHead.position.y =
+					(views[0].pose.position.y + views[1].pose.position.y)*0.5f;
+				menuHead.position.z =
+					(views[0].pose.position.z + views[1].pose.position.z)*0.5f;
+				float menuYawHold = g.hudYawHold;
+				const XrQuaternionf rollFree =
+					rollFreeOrientation(menuHead.orientation, &menuYawHold);
+				debugLayer.space = submitSpace;
+				if(fullMenu){
+					// World-locked panel with a yaw-only anchor, captured when
+					// the menu opens and on recentre, at the head's eye height.
+					if(!g.menuAnchorValid || g.menuSpace != submitSpace){
+						const XrQuaternionf &q = menuHead.orientation;
+						const float fx = -(2.0f*(q.x*q.z + q.y*q.w));
+						const float fz = -(1.0f - 2.0f*(q.x*q.x + q.y*q.y));
+						g.menuYaw = (fx*fx + fz*fz > 0.0025f) ?
+							atan2f(-fx, -fz) : menuYawHold;
+						g.menuHeadPos = menuHead.position;
+						g.menuSpace = submitSpace;
+						g.menuAnchorValid = true;
+					}
+					debugLayer.pose.orientation = {
+						0.0f, sinf(g.menuYaw*0.5f), 0.0f,
+						cosf(g.menuYaw*0.5f) };
+					debugLayer.pose.position.x =
+						g.menuHeadPos.x - sinf(g.menuYaw)*1.65f;
+					debugLayer.pose.position.y = g.menuHeadPos.y;
+					debugLayer.pose.position.z =
+						g.menuHeadPos.z - cosf(g.menuYaw)*1.65f;
+				}else{
+					// The compact overlay keeps following the head, yaw and
+					// pitch only.
+					const XrQuaternionf &r = rollFree;
+					const float v[3] = { 0.0f, -0.24f, -1.5f };
+					const float cx = r.y*v[2] - r.z*v[1];
+					const float cy = r.z*v[0] - r.x*v[2];
+					const float cz = r.x*v[1] - r.y*v[0];
+					const float dx = r.y*cz - r.z*cy;
+					const float dy = r.z*cx - r.x*cz;
+					const float dz = r.x*cy - r.y*cx;
+					debugLayer.pose.orientation = rollFree;
+					debugLayer.pose.position.x = menuHead.position.x +
+						v[0] + 2.0f*(r.w*cx + dx);
+					debugLayer.pose.position.y = menuHead.position.y +
+						v[1] + 2.0f*(r.w*cy + dy);
+					debugLayer.pose.position.z = menuHead.position.z +
+						v[2] + 2.0f*(r.w*cz + dz);
+				}
+#endif
 				debugLayer.size.width = fullMenu ? 2.15f : 1.2f;
 				debugLayer.size.height =
 					debugLayer.size.width*

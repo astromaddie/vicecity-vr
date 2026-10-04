@@ -3062,10 +3062,23 @@ setIm2DTransform(const float32 transform[16], float32 planeDistance,
 	SceneData *scene = getSceneData();
 	memcpy(scene->im2dTransform, transform, sizeof(float32)*16);
 	memcpy(gvk.im2dTransformActive, transform, sizeof(gvk.im2dTransformActive));
+	if(!gvk.im2dSpriteOverride)
+		memcpy(scene->im2dSpriteTransform, transform, sizeof(float32)*16);
 	scene->im2dParams[0] = planeDistance;
 	scene->im2dParams[1] = eye[0];
 	scene->im2dParams[2] = eye[1];
 	scene->im2dParams[3] = eye[2];
+}
+
+void
+setIm2DSpriteTransform(const float32 transform[16])
+{
+	// Wrist panels swap the HUD plane mid-frame and restore it through
+	// setIm2DTransform; the override keeps that from dragging the sprite
+	// plane along with it.
+	gvk.im2dSpriteOverride = 1;
+	memcpy(getSceneData()->im2dSpriteTransform, transform,
+	       sizeof(float32)*16);
 }
 
 void

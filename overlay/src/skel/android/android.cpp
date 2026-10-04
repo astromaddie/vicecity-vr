@@ -481,6 +481,21 @@ androidgame::GetIm2DViewWindow(float *x, float *y)
 	*y = gVrViewWindowY;
 }
 
+#if MIAMIVR_STEAM_FRAME
+// World sprites counter-roll against the head only while the RenderWare
+// camera is the headset's own view and the eyes see the world, not a flat
+// cinema screen: a scripted camera's own tilt is the shot's, not the head's.
+bool
+VrWorldSpritesCanRoll(void)
+{
+	extern bool gVrFirstPersonActive;
+	rw::float32 vr[3], vu[3], va[3], vp[3];
+	return gVrFirstPersonActive &&
+		!androidgame::VrShouldUseTheaterMode() &&
+		rw::vulkan::getFirstPersonViewFrame(vr, vu, va, vp);
+}
+#endif
+
 void
 VrCaptureViewWindow(void)
 {

@@ -942,6 +942,8 @@ stateInit(void)
 	gs.scene.fogParams[3] = 0.0f;	// disabled
 	gs.scene.im2dTransform[0] = gs.scene.im2dTransform[5] =
 	gs.scene.im2dTransform[10] = gs.scene.im2dTransform[15] = 1.0f;
+	gs.scene.im2dSpriteTransform[0] = gs.scene.im2dSpriteTransform[5] =
+	gs.scene.im2dSpriteTransform[10] = gs.scene.im2dSpriteTransform[15] = 1.0f;
 
 	VKLOG("pipeline state initialised");
 	return 1;

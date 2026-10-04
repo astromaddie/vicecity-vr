@@ -49,6 +49,9 @@ layout(set = 0, binding = 0) uniform SceneData {
 	// Together they turn a screen vertex plus its own camera depth back into
 	// a world point; see rw_im2d.vert.
 	vec4 im2dParams;
+	// Plane the world sprites land on (full head frame); im2dTransform above
+	// carries the HUD, which may have its roll removed. See rw_im2d.vert.
+	mat4 im2dSpriteTransform;
 	// The timecycle sky top the render pass clears to; the vehicle env
 	// reflection mixes toward it away from the horizon's fog colour.
 	vec4 skyColour;

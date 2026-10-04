@@ -401,8 +401,8 @@ updateFrameSystemLayer(const xrvk::ControllerInput &controllers)
 // handed over, steps the game inside it, and submits.
 void
 renderGameFrame(VkImage image, VkImageView view, const float viewProj[2][16],
-                const float im2dWorld[16], float im2dDistance,
-                const float headPos[3], float headYaw,
+                const float im2dWorld[16], const float im2dSpriteWorld[16],
+                float im2dDistance, const float headPos[3], float headYaw,
                 const float headQuat[4], float eyeFovDeg,
                 const float eyePos[2][3], const float eyeQuat[2][4])
 {
@@ -499,12 +499,14 @@ renderGameFrame(VkImage image, VkImageView view, const float viewProj[2][16],
 #endif
 		rw::vulkan::setIm2DTransform(
 			theaterIm2D, theaterDistance, origin);
+		rw::vulkan::setIm2DSpriteTransform(theaterIm2D);
 		rw::vulkan::setHeadPose(origin, 0.0f, identityQuat);
 		rw::vulkan::clearFirstPersonEyePoses();
 	}else{
 		rw::vulkan::setStereoViewProjection(viewProj[0], viewProj[1]);
 		rw::vulkan::setSgsrHorizontalFovDegrees(eyeFovDeg);
 		rw::vulkan::setIm2DTransform(im2dWorld, im2dDistance, headPos);
+		rw::vulkan::setIm2DSpriteTransform(im2dSpriteWorld);
 		StoreHudIm2D(im2dWorld, im2dDistance, headPos);
 		rw::vulkan::setHeadPose(headPos, headYaw, headQuat);
 		rw::vulkan::setFirstPersonEyePoses(eyePos, eyeQuat);

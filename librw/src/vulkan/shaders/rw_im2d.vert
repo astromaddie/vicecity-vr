@@ -41,9 +41,16 @@ void main()
 	// already were.
 	// The plane arrives per draw in the model slot, so a single draw can be
 	// placed somewhere else -- the wrist minimap rides on that.
-	vec4 plane = push.model * vec4(inPosition.xy, 0.0, 1.0);
+	//
+	// World sprites take the sprite plane instead: the full head frame the
+	// game projected them through, so they land on their source. The game
+	// counter-rolls their corners about the centre, and the HUD plane has
+	// the head roll taken out.
 	float panel = scene.im2dParams.x;
 	float depth = max(inPosition.w, panel);
+	bool deep = inPosition.w > panel+0.01;
+	mat4 spritePlane = deep && push.surfaceProps.x <= 1.5 ? scene.im2dSpriteTransform : push.model;
+	vec4 plane = spritePlane * vec4(inPosition.xy, 0.0, 1.0);
 	vec3 eye = scene.im2dParams.yzw;
 	vec3 world = eye + (plane.xyz - eye) * (depth/panel);
 	gl_Position = scene.viewProj[gl_ViewIndex] * vec4(world, 1.0);
@@ -63,5 +70,5 @@ void main()
 	fragTexCoord = inTexCoord;
 	// HUD/fonts arrive at the near plane and are clamped to the head-locked
 	// panel. Coronas, headlights and particles retain their real camera depth.
-	fragWorldSprite = inPosition.w > panel+0.01 ? 1.0 : 0.0;
+	fragWorldSprite = deep ? 1.0 : 0.0;
 }

@@ -277,6 +277,9 @@ struct Globals
 	// scene block so a draw can move the interface mid-frame -- the wrist
 	// minimap swaps it around the radar and puts it back.
 	float32 im2dTransformActive[16];
+	// Set once the app supplies its own world-sprite plane; until then the
+	// sprites follow the HUD plane, as they always did.
+	bool32 im2dSpriteOverride;
 	// Wrist panels. Each draws into a private little target before the
 	// frame's own pass opens; wristPanelOffscreen tells the Im2D path that
 	// the model slot is carrying a straight screen-pixels-to-clip matrix for
@@ -453,6 +456,11 @@ struct SceneData
 	float32 im2dTransform[16];
 	// x = Im2D plane distance, yzw = eye position in play space.
 	float32 im2dParams[4];
+	// Plane the world sprites (coronas, flares, the aim marker) land on: the
+	// full head frame, roll included, because the game projected them through
+	// a camera that carries the roll. The HUD plane in im2dTransform has the
+	// roll taken out. See rw_im2d.vert.
+	float32 im2dSpriteTransform[16];
 	// The timecycle sky top the render pass clears to; the vehicle env
 	// reflection mixes toward it away from the horizon's fog colour.
 	float32 skyColour[4];

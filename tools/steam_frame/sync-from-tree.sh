@@ -12,8 +12,8 @@
 #   <path> in overlay/    -> overlay/<path>
 #   a new file            -> overlay/<path>
 #
-# A changed reVC file that the overlay does not carry would need a patch, so
-# the script stops and names it instead of copying reVC source into the kit.
+# A changed reVC file that the overlay does not carry goes into
+# patches/revc-steam-frame.patch instead of being copied into the kit.
 # Build products and local files (android/app/build, .cxx, local.properties,
 # third_party downloads) are skipped.
 set -euo pipefail
@@ -70,8 +70,16 @@ done < <(
 )
 
 echo "copied $copied file(s) into the kit"
+# Changed reVC files that overlay/ does not carry travel as one patch, applied
+# by assemble.sh after the Quest patches. It is regenerated from the tree each
+# time, so it always holds exactly the tree's Frame engine changes.
+patch="$kit/patches/revc-steam-frame.patch"
 if ((${#blocked[@]})); then
-	echo "these changed reVC files are not in overlay/ and need a patch in patches/:" >&2
-	printf '  %s\n' "${blocked[@]}" >&2
-	exit 1
+	git -C "$tree" diff "$baseline" -- "${blocked[@]}" > "$patch.tmp"
+	if ! cmp -s "$patch.tmp" "$patch"; then
+		mv "$patch.tmp" "$patch"
+		echo "  patches/revc-steam-frame.patch (${#blocked[@]} reVC file(s): ${blocked[*]})"
+	else
+		rm -f "$patch.tmp"
+	fi
 fi

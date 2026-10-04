@@ -198,6 +198,13 @@ float VrCinema3DDepthThisFrame(void);
 int VrViewMode(void);
 bool VrThirdPersonScreen(void);
 bool VrThirdPersonShoulder(void);
+// vr_settings.ini ThirdPersonMovement: 0 (default) the ped turns to the direction
+// he walks, 1 he keeps facing the camera and strafes.
+bool VrThirdPersonFacesMovement(void);
+// True while the player ped should turn to face the way the stick walks him
+// instead of being locked to the camera heading: a third person view, on foot,
+// FACE MOVE, and not aiming or firing a ranged weapon.
+bool VrThirdPersonFaceMove(void);
 void VrToggleThirdPerson(void);
 // Mode 1 and gameplay is running: the stock camera is on the theater screen.
 bool VrScreenGameplayActive(void);

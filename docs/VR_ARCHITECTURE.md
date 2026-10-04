@@ -39,10 +39,81 @@ contains `Frame`, because `minSdk` cannot vary per build type.
 | Manifest | `src/main` | plus `src/frame`: headtracking not required, no `focusaware`, all-files access declared |
 | Signing | debug, or the release keystore | debug key |
 | Data root | app external files dir | `/sdcard/Documents/ViceCityVR` (the headset's `~/Documents/ViceCityVR`), app dir as fallback |
+| Retail data | the copy in the data root | the Steam install in place when there is one, else the copy (section 2a) |
 | OpenXR API | `XR_CURRENT_API_VERSION` | 1.0 |
 | Controller profiles | Touch | Frame, Index, Touch |
 | Recentre | both stick clicks | View hold 1 s (and the system recentre event) |
 | Shared library | none | `third_party/sfvr` 0.1.0 (View timing, haptic table, `[vr-perf]`) |
+
+## 2a. Game data sources (Frame)
+
+Inside Lepton the host's Steam library is visible at the same paths
+(`/home/steamos/.local/share/Steam` and its `steamapps`): world-readable, not
+writable by the app (device check on another port, 2026-10-04).
+`/sdcard/Documents` is a symlink to `/home/steamos/Documents`.
+
+At start-up (`gamedata::init`, `src/skel/android/GameData.cpp`) the game parses
+`steamapps/libraryfolders.vdf` for the library paths, reads
+`appmanifest_12110.acf` for `installdir` ("Grand Theft Auto Vice City") and its
+`StateFlags` (it must say installed, bit 4), and checks that `models/gta3.img`,
+`models/gta3.dir` and `data/gta_vc.dat` are readable, matching names without
+regard to case. The log says which one won, once:
+
+```
+[vr] game data: steam <folder>
+[vr] game data: Documents copy <folder> (no Steam install of app 12110 found)
+[vr] game data overlay: <folder> (port files, settings, saves, caches)
+```
+
+Reads then resolve in this order:
+
+1. **Port files** from Documents: everything in the tree's `gamefiles/` (reVC's
+   text, frontend art, VR hands, `neo/`, scripts). CMake lists them into the
+   build, so the APK always knows which files it expects there. `deploy.sh`
+   installs them.
+2. **Everything else in the retail folders** (`data TEXT anim txd skins mp3
+   movies models Audio`) from the Steam install.
+3. **The Documents copy**, for anything the above did not find. This is the
+   fallback, and it is the old behaviour: with no Steam install nothing
+   changes.
+
+Anything outside those folders (`vr_settings.ini`, `re3.ini`, `modelsets/`, caches) is
+read from Documents first, so the Modern and Xbox model sets, which the user
+installs into Documents, are untouched. **All writes land in Documents**:
+the process's working directory stays there, saves go to `userfiles/`, and the
+temporary files for the radio and mission-dialogue streams go to the storage
+root. The Steam folder is never written.
+
+The game changes directory constantly (`CFileMgr::SetDir("DATA")` and the
+like), so `mychdir` no longer really changes it on the Frame; it records the
+game's current folder and every read is resolved against that. Every route to
+a file goes through `gamedata::resolve`:
+
+| Reader | Where |
+| --- | --- |
+| `CFileMgr` (`.dat`, `.ini`, `.gxt`, `.scm`, `.dir`, saves, the VR hand meshes) | `fcaseopen` in `crossplatform.cpp` |
+| `.img` archives (including the model-set fallback), and the block size from `statvfs` | `CdStreamAddImagePath`, `GetGTA3ImgSize`, `CdStreamInit` |
+| librw streams (`.txd`, `.dff`, `.col`, `.ifp`) and BMP/PNG images (the hand albedo) | `RwStreamOpen`, `RtPNGImageRead` and friends in `fakerw/fake.cpp` |
+| Folder listing (`skins/*.bmp`) | `FindFirstFile`: Documents' folder if it has one, else Steam's |
+| `sfx.SDT`, `sfx.RAW`, radio and mission streams | `platform::resolveGamePathCaseInsensitive` |
+
+The radio and mission streams are handed to Android's `MediaPlayer` by path, so
+if it cannot open a file in the Steam folder the app copies that one stream
+under the storage root and tries again (`[vr] MediaPlayer could not open ...
+in place; using a copy`). The IMA ADPCM mission dialogue is decoded to a
+temporary file under the storage root as before.
+
+The engine edits sit behind `MIAMIVR_GAMEDATA`, which `GameData.h` defines as
+`defined(RW_VULKAN) && defined(__ANDROID__) && MIAMIVR_STEAM_FRAME` (and not
+`MIAMIVR_BRINGUP`). On the Quest build it is 0, and `GameData.cpp` compiles to
+nothing.
+
+Verified: the resolver, library discovery and the order above by a host test
+(`tools/steam_frame/tests/run_gamedata_test.sh` in the assembled tree, a fake
+library in a temp folder), and both APKs build. The Steam-in-place path is not
+device-verified. The fallback path is what runs today, because Vice City is
+not installed in Steam on the Frame, and it has not been re-run on the device
+since this change.
 
 ## 3. Frame protocol (inherited from the Quest port)
 
@@ -101,7 +172,8 @@ The Frame controller is a split gamepad. Its bindings:
 | Frame APK builds; Frame strings only in the Frame library | host build |
 | Bindings: component paths, hands, unique names | host test |
 | Lepton facts in section 1 | device, read-only |
-| Install from the Steam library title, game boots and plays, data in `~/Documents/ViceCityVR` | **worn**: the user reported "it works good" (2026-10-03, first session). The game wrote `vr_settings.ini` and its logs to the Documents folder |
+| Install from the Steam library title, game boots and plays, data in `~/Documents/ViceCityVR` | **worn**: the user reported "it works good" (2026-10-03, first session). The game wrote `vr_settings.ini` and its logs to the Documents folder. That was before the Steam-in-place change |
+| Game data from the Steam install in place, Documents copy as the fallback (section 2a): library discovery, read order, writes in Documents | host build and host test. Not device-verified: the fallback is what runs today, Vice City is not installed in Steam on the Frame |
 | CINEMA 3D cutscenes | host build, plus a numeric check of the perceived depths. **Not worn** |
 | Third-person view (`ViewMode`: 3D SCREEN / OVER SHOULDER, View short-press toggle) | host build. **Not worn**. Risks: chase-camera collision jumps, crosshair against the head-locked HUD plane, screen-to-stereo switches on mode change |
 | Diagnostics (`vr-diag.ini`: force_render, synthetic head, eye dumps, `[vr-perf]`) | host build |

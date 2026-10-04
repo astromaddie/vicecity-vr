@@ -1,4 +1,5 @@
 #include "platform_android.h"
+#include "GameData.h"
 
 #include <android/native_activity.h>
 #include <dirent.h>
@@ -368,6 +369,36 @@ isAdf(const std::string &path)
 		strcasecmp(path.c_str() + path.size() - 4, ".adf") == 0;
 }
 
+#if MIAMIVR_GAMEDATA
+static bool
+copyFile(const std::string &source, const std::string &destination)
+{
+	FILE *in = fopen(source.c_str(), "rb");
+	if(in == nullptr)
+		return false;
+	FILE *out = fopen(destination.c_str(), "wb");
+	if(out == nullptr){
+		fclose(in);
+		return false;
+	}
+	static thread_local uint8_t buffer[256 * 1024];
+	bool ok = true;
+	size_t count;
+	while((count = fread(buffer, 1, sizeof(buffer), in)) > 0)
+		if(fwrite(buffer, 1, count, out) != count){
+			ok = false;
+			break;
+		}
+	if(ferror(in))
+		ok = false;
+	fclose(out);
+	fclose(in);
+	if(!ok)
+		unlink(destination.c_str());
+	return ok;
+}
+#endif
+
 static bool
 decryptAdf(const std::string &source, const std::string &destination)
 {
@@ -690,17 +721,43 @@ audioLoadStream(int stream, const char *absolutePath, int positionMs,
 			return;
 		}
 
-		jobject local = workerEnv->NewObject(gMediaPlayerClass, gMediaMethods.ctor);
-		jobject player = local ? workerEnv->NewGlobalRef(local) : nullptr;
-		if(local) workerEnv->DeleteLocalRef(local);
-		bool ok = player != nullptr && !checkJavaException(workerEnv, "MediaPlayer ctor");
-		if(ok){
-			workerEnv->CallVoidMethod(player, gMediaMethods.setAudioStreamType, 3);
-			jstring path = workerEnv->NewStringUTF(decoderPath.c_str());
-			workerEnv->CallVoidMethod(player, gMediaMethods.setDataSource, path);
-			workerEnv->DeleteLocalRef(path);
-			workerEnv->CallVoidMethod(player, gMediaMethods.prepare);
-			ok = !checkJavaException(workerEnv, "MediaPlayer prepare");
+		jobject player = nullptr;
+		bool ok = false;
+		for(int attempt = 0; attempt < 2; attempt++){
+			jobject local = workerEnv->NewObject(gMediaPlayerClass, gMediaMethods.ctor);
+			player = local ? workerEnv->NewGlobalRef(local) : nullptr;
+			if(local) workerEnv->DeleteLocalRef(local);
+			ok = player != nullptr && !checkJavaException(workerEnv, "MediaPlayer ctor");
+			if(ok){
+				workerEnv->CallVoidMethod(player, gMediaMethods.setAudioStreamType, 3);
+				jstring path = workerEnv->NewStringUTF(decoderPath.c_str());
+				workerEnv->CallVoidMethod(player, gMediaMethods.setDataSource, path);
+				workerEnv->DeleteLocalRef(path);
+				workerEnv->CallVoidMethod(player, gMediaMethods.prepare);
+				ok = !checkJavaException(workerEnv, "MediaPlayer prepare");
+			}
+#if MIAMIVR_GAMEDATA
+			if(ok || attempt == 1 || !temporary.empty() ||
+			   strncmp(decoderPath.c_str(), gStorageRoot, strlen(gStorageRoot)) == 0)
+				break;
+			// A stream played straight from the Steam install, and the player
+			// could not open it (the platform decoder may not be allowed to
+			// read that folder). Stage a copy under the storage root once and
+			// try again; it is removed with the player like any other temporary.
+			releasePlayer(workerEnv, player);
+			player = nullptr;
+			const char *dot = strrchr(source.c_str(), '.');
+			char path[640];
+			snprintf(path, sizeof(path), "%s/.miamivr-stream-%d-%u%s",
+				gStorageRoot, stream, generation, dot != nullptr ? dot : "");
+			if(!copyFile(source, path))
+				break;
+			LOGW("[vr] MediaPlayer could not open %s in place; using a copy", source.c_str());
+			temporary = path;
+			decoderPath = temporary;
+#else
+			break;
+#endif
 		}
 
 		if(!ok){
@@ -881,6 +938,15 @@ resolveGamePath(char *buffer, size_t bufferSize, const char *relative)
 bool
 resolveGamePathCaseInsensitive(char *buffer, size_t bufferSize, const char *relative)
 {
+#if MIAMIVR_GAMEDATA
+	// The Steam install, the port's own files or the Documents copy; see
+	// src/skel/android/GameData.h. Relative paths here are from the game root.
+	{
+		char rooted[512];
+		resolveGamePath(rooted, sizeof(rooted), relative);
+		return gamedata::resolve(rooted, false, buffer, bufferSize);
+	}
+#endif
 	char normalised[512];
 	resolveGamePath(normalised, sizeof(normalised), relative);
 

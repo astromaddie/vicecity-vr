@@ -30,6 +30,84 @@ index fdfe227..2634c44 100644
  		float Heading = Front.Heading();
  		((CPed*)TheCamera.pTargetEntity)->m_fRotationCur = Heading;
  		((CPed*)TheCamera.pTargetEntity)->m_fRotationDest = Heading;
+diff --git a/src/core/CdStreamPosix.cpp b/src/core/CdStreamPosix.cpp
+index dbdfbff..60cfb59 100644
+--- a/src/core/CdStreamPosix.cpp
++++ b/src/core/CdStreamPosix.cpp
+@@ -208,7 +208,15 @@ CdStreamInit(int32 numChannels)
+ {
+ 	struct statvfs fsInfo;
+ 
++#if MIAMIVR_GAMEDATA
++	// Only the block size is wanted, so any file on the data's filesystem will
++	// do; gta3.img is where the game data is read from (Steam or the copy).
++	char fsPath[PATH_MAX];
++	gamedata::resolve("models/gta3.img", false, fsPath, sizeof(fsPath));
++	if((statvfs(fsPath, &fsInfo)) < 0)
++#else
+ 	if((statvfs("models/gta3.img", &fsInfo)) < 0)
++#endif
+ 	{
+ 		CDTRACE("can't get filesystem info");
+ 		ASSERT(0);
+@@ -258,7 +266,11 @@ GetGTA3ImgSize(void)
+ 	struct stat statbuf;
+ 
+ 	char path[PATH_MAX];
++#if MIAMIVR_GAMEDATA
++	gamedata::resolve(gImgNames[0], false, path, sizeof(path));
++#else
+ 	realpath(gImgNames[0], path);
++#endif
+ 	if (stat(path, &statbuf) == -1) {
+ 		// Try case-insensitivity
+ 		char* real = casepath(gImgNames[0], false);
+@@ -559,7 +571,14 @@ CdStreamAddImagePath(char const *path, bool resolveModelSet)
+ 	if(gNumImages >= MAX_CDIMAGES || strlen(path) >= sizeof(gCdImageNames[0]))
+ 		return false;
+ 
++#if MIAMIVR_GAMEDATA
++	// The .img files are retail data: the Steam install, else the copy.
++	char gamePath[PATH_MAX];
++	gamedata::resolve(path, false, gamePath, sizeof(gamePath));
++	gImgFiles[gNumImages] = open(gamePath, _gdwCdStreamFlags);
++#else
+ 	gImgFiles[gNumImages] = open(path, _gdwCdStreamFlags);
++#endif
+ 	const int directErrno = gImgFiles[gNumImages] == -1 ? errno : 0;
+ 
+ 	// Fix case sensitivity and backslashes.
+@@ -580,7 +599,12 @@ CdStreamAddImagePath(char const *path, bool resolveModelSet)
+ 	}
+ 	if(gImgFiles[gNumImages] == -1 && path != originalPath){
+ 		path = originalPath;
++#if MIAMIVR_GAMEDATA
++		gamedata::resolve(path, false, gamePath, sizeof(gamePath));
++		gImgFiles[gNumImages] = open(gamePath, _gdwCdStreamFlags);
++#else
+ 		gImgFiles[gNumImages] = open(path, _gdwCdStreamFlags);
++#endif
+ 		if(gImgFiles[gNumImages] == -1){
+ 			char *real = casepath(path, false);
+ 			if(real){
+diff --git a/src/core/FileMgr.cpp b/src/core/FileMgr.cpp
+index 8d49f8e..a340ad7 100644
+--- a/src/core/FileMgr.cpp
++++ b/src/core/FileMgr.cpp
+@@ -38,6 +38,13 @@ static myFILE myfiles[NUMFILES];
+ // Case-insensitivity on linux (from https://github.com/OneSadCookie/fcaseopen)
+ void mychdir(char const *path)
+ {
++#if MIAMIVR_GAMEDATA
++	// The working directory stays in Documents, where everything is written.
++	// The game's own "current folder" is only remembered, so reads can still
++	// pick the Steam install or Documents per file. See GameData.h.
++	gamedata::changeDir(path);
++	return;
++#endif
+ 	char* r = casepath(path, false);
+     if (r) {
+         chdir(r);
 diff --git a/src/core/main.cpp b/src/core/main.cpp
 index 45c438b..eb49a37 100644
 --- a/src/core/main.cpp
@@ -57,6 +135,86 @@ index 45c438b..eb49a37 100644
  #ifdef RW_VULKAN
  	// ConstructRenderList runs before the HMD pose replaces the gameplay
  	// camera. Rebuild the 2D occluder silhouettes from the actual Quest view
+diff --git a/src/fakerw/fake.cpp b/src/fakerw/fake.cpp
+index b844c54..376a997 100644
+--- a/src/fakerw/fake.cpp
++++ b/src/fakerw/fake.cpp
+@@ -374,7 +374,16 @@ RwStream *RwStreamOpen(RwStreamType type, RwStreamAccessType accessType, const v
+ 		StreamFile fakefile;
+ 		file = rwNewT(StreamFile, 1, 0);
+ 		memcpy(file, &fakefile, sizeof(StreamFile));
+-#ifndef _WIN32
++#if MIAMIVR_GAMEDATA
++		{
++			char gamePath[PATH_MAX];
++			gamedata::resolveForMode((const char*)pData, mode, gamePath, sizeof(gamePath));
++			if (file->open(gamePath, mode))
++				return file;
++		}
++		rwFree(file);
++		return nil;
++#elif !defined(_WIN32)
+ 		char *r = casepath((char*)pData);
+ 		if (r) {
+ 			if (file->open((char*)r, mode)) {
+@@ -928,6 +937,14 @@ RpHAnimHierarchy *RpSkinAtomicGetHAnimHierarchy( const RpAtomic *atomic ) { retu
+ RwImage *
+ RtBMPImageWrite(RwImage *image, const RwChar *imageName)
+ {
++#if MIAMIVR_GAMEDATA
++	{
++		char gamePath[PATH_MAX];
++		gamedata::resolve(imageName, true, gamePath, sizeof(gamePath));
++		rw::writeBMP(image, gamePath);
++		return image;
++	}
++#endif
+ #ifndef _WIN32
+ 	char *r = casepath(imageName);
+ 	if (r) {
+@@ -945,6 +962,13 @@ RtBMPImageWrite(RwImage *image, const RwChar *imageName)
+ RwImage *
+ RtBMPImageRead(const RwChar *imageName)
+ {
++#if MIAMIVR_GAMEDATA
++	{
++		char gamePath[PATH_MAX];
++		gamedata::resolve(imageName, false, gamePath, sizeof(gamePath));
++		return rw::readBMP(gamePath);
++	}
++#endif
+ #ifndef _WIN32
+ 	RwImage *image;
+ 	char *r = casepath(imageName);
+@@ -965,6 +989,14 @@ RtBMPImageRead(const RwChar *imageName)
+ RwImage *
+ RtPNGImageWrite(RwImage *image, const RwChar *imageName)
+ {
++#if MIAMIVR_GAMEDATA
++	{
++		char gamePath[PATH_MAX];
++		gamedata::resolve(imageName, true, gamePath, sizeof(gamePath));
++		rw::writePNG(image, gamePath);
++		return image;
++	}
++#endif
+ #ifndef _WIN32
+ 	char *r = casepath(imageName);
+ 	if (r) {
+@@ -982,6 +1014,13 @@ RtPNGImageWrite(RwImage *image, const RwChar *imageName)
+ RwImage *
+ RtPNGImageRead(const RwChar *imageName)
+ {
++#if MIAMIVR_GAMEDATA
++	{
++		char gamePath[PATH_MAX];
++		gamedata::resolve(imageName, false, gamePath, sizeof(gamePath));
++		return rw::readPNG(gamePath);
++	}
++#endif
+ #ifndef _WIN32
+ 	RwImage *image;
+ 	char *r = casepath(imageName);
 diff --git a/src/peds/Ped.cpp b/src/peds/Ped.cpp
 index cce246e..f1b76e9 100644
 --- a/src/peds/Ped.cpp
@@ -307,3 +465,55 @@ index fae6684..f432ea0 100644
  	static float GetNearScreenZ(void) { return m_f2DNearScreenZ; }
  	static float GetFarScreenZ(void) { return m_f2DFarScreenZ; }
  
+diff --git a/src/skel/crossplatform.cpp b/src/skel/crossplatform.cpp
+index e3670fb..0b154a0 100644
+--- a/src/skel/crossplatform.cpp
++++ b/src/skel/crossplatform.cpp
+@@ -38,10 +38,18 @@ HANDLE FindFirstFile(const char* pathname, WIN32_FIND_DATA* firstfile) {
+ 	
+ 	// Case-sensitivity and backslashes...
+     // Will be freed at the bottom
++#if MIAMIVR_GAMEDATA
++	// A folder of game data: Documents' if it has one, else the Steam install's.
++	char gameFolder[PATH_MAX];
++	char *realFolder = nil;
++	if (gamedata::resolveDir(folder, gameFolder, sizeof(gameFolder)))
++		folder = gameFolder;
++#else
+     char *realFolder = casepath(folder);
+ 	if (realFolder) {
+         folder = realFolder;
+ 	}
++#endif
+ 
+ 	strncpy(firstfile->folder, folder, sizeof(firstfile->folder));
+ 
+@@ -145,6 +153,13 @@ char *trim(char *s) {
+ FILE* _fcaseopen(char const* filename, char const* mode)
+ {
+     FILE* result;
++#if MIAMIVR_GAMEDATA
++    // Reads come from the Steam install or the Documents copy, writes always
++    // go to Documents. See GameData.h.
++    char gamePath[PATH_MAX];
++    gamedata::resolveForMode(filename, mode, gamePath, sizeof(gamePath));
++    return fopen(gamePath, mode);
++#endif
+     char* real = casepath(filename);
+     if (!real)
+         result = fopen(filename, mode);
+diff --git a/src/skel/crossplatform.h b/src/skel/crossplatform.h
+index e77d7ce..da3d5d3 100644
+--- a/src/skel/crossplatform.h
++++ b/src/skel/crossplatform.h
+@@ -54,6 +54,10 @@ extern long _dwOperatingSystemVersion;
+ char *casepath(char const *path, bool checkPathFirst = true);
+ FILE *_fcaseopen(char const *filename, char const *mode);
+ #define fcaseopen _fcaseopen
++#if defined(RW_VULKAN) && defined(__ANDROID__)
++// Steam Frame: game data read from the Steam install, falling back to the copy.
++#include "GameData.h"
++#endif
+ #endif
+ 
+ #ifdef RW_VULKAN

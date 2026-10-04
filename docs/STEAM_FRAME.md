@@ -45,26 +45,50 @@ carry; that change needs a patch. Delete the tree to reassemble it from the kit.
 
 ## 2. Install and play
 
-Setup is done once. Start **Lepton Development** from the Frame's Steam library
-(adb runs over it), then run:
+Setup is done once. Install Grand Theft Auto: Vice City from Steam on the Frame
+if you haven't (app 12110). The game reads it from the Steam library in place,
+so there is nothing to copy. Start **Lepton Development** from the Frame's Steam
+library (adb runs over it), then run:
+
+```sh
+tools/steam_frame/deploy.sh --register-title
+```
+
+When the game starts it looks for Vice City in the Steam library (every library
+listed in `libraryfolders.vdf`, the install folder from the appmanifest). Lepton
+can read Steam's folder but not write to it, which is fine: saves, settings and
+the port's own files all live in Documents.
+
+If Vice City isn't installed in Steam on the Frame, the game uses a copy of the
+data in `~/Documents/ViceCityVR/gamedata` instead. Make one from a PC install:
 
 ```sh
 tools/steam_frame/deploy.sh --game-dir "/path/to/Grand Theft Auto Vice City" --register-title
 ```
 
-If Grand Theft Auto: Vice City is installed on the Frame itself from Steam
-(app 12110), use `--from-steam` instead of `--game-dir`. The copy into
-`~/Documents/ViceCityVR` then runs on the headset; Lepton cannot see Steam's
-install folder directly.
+`--from-steam` still works too. It copies the Steam install into Documents on
+the headset as a fallback; you don't need it any more. A copy you already made
+keeps working: when both exist the game prefers Steam, and uses the copy for
+anything Steam doesn't have.
 
-This does four things:
+A deploy does these things:
 
-- Copies the retail folders the game reads to the headset's
-  `~/Documents/ViceCityVR/gamedata` over SSH: `data TEXT anim txd skins mp3
-  movies models Audio`.
-- Copies the port's replacement text, frontend art and VR hands on top.
+- Installs the port's own files in `~/Documents/ViceCityVR/gamedata`: the
+  replacement text, frontend art, VR hands, `neo/` and scripts (the tree's
+  `gamefiles/`). The game always reads these from Documents, never from Steam, so
+  every deploy that installs an APK refreshes them (they are tied to the
+  build). `--port-assets` does only that, `--no-port-assets` skips it.
 - Installs the APK in Lepton Development.
-- Registers the persistent **ViceCityVR** title in the Steam library.
+- Registers the persistent **ViceCityVR** title in the Steam library (the
+  `--register-title` part, only the first time).
+- With `--game-dir` or `--from-steam`, first copies the retail folders the game
+  reads into Documents over SSH: `data TEXT anim txd skins mp3 movies models
+  Audio`.
+
+To see which one the game picked, look for `[vr] game data:` in the log. It says
+either `steam <folder>` or `Documents copy <folder> (no Steam install of app
+12110 found)`, followed by the Documents folder that holds the port's files,
+settings and saves.
 
 Saves and settings go to `~/Documents/ViceCityVR/userfiles` and
 `gamedata/vr_settings.ini`. All of it survives a Lepton reset.
@@ -149,7 +173,8 @@ their game. Check first, for example with
 | Frame APK builds: `com.miamivr.quest.frame`, minSdk 30, headtracking not required, `focusaware` removed | host build (`aapt dump`) |
 | Frame bindings use only real component paths on the right hands, with unique action names | host test |
 | Lepton is API 30, Vulkan 1.1, no headtracking feature; SteamVR runtime manifest present | device, read-only |
-| Installs and plays from the ViceCityVR Steam title; data and settings in `~/Documents/ViceCityVR` | **worn** (user report, 2026-10-03) |
+| Installs and plays from the ViceCityVR Steam title; data and settings in `~/Documents/ViceCityVR` | **worn** (user report, 2026-10-03), before the Steam-in-place change below |
+| Reading the game from the Steam install in place, falling back to the copy in Documents | host build and a host test of the lookup. The Steam path has not been tried on the headset. The fallback is what runs today, because Vice City isn't installed in Steam on the Frame right now, and it hasn't been re-run on the device since the change |
 | CINEMA 3D cutscenes (projection layer) | **worn** (user: "it works now", 2026-10-03) |
 | Third-person view: both styles and the View toggle | **worn**, toggled repeatedly in the log (2026-10-03); per-control feedback not given |
 | Freeze at the third intro scene load (17:32, 2026-10-03) | seen once; the next new game loaded in 0.07 s. **Open**: the watchdog now logs `[vr-stall]` traces |

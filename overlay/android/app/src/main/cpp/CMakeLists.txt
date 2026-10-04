@@ -192,6 +192,12 @@ if(NOT MIAMIVR_BRINGUP)
 		"${REVC_ROOT}/src/vehicles/VehicleDeformation.cpp")
 	list(REMOVE_ITEM GAME_SOURCES "${VEHICLE_DEFORMATION_SOURCE}")
 	list(APPEND GAME_SOURCES "${VEHICLE_DEFORMATION_SOURCE}")
+	# Steam Frame: game data from the Steam install in place (GameData.h). An
+	# empty translation unit on every other build. Explicit for the same reason
+	# as the sources above.
+	set(GAME_DATA_SOURCE "${REVC_ROOT}/src/skel/android/GameData.cpp")
+	list(REMOVE_ITEM GAME_SOURCES "${GAME_DATA_SOURCE}")
+	list(APPEND GAME_SOURCES "${GAME_DATA_SOURCE}")
 	# Exclude the tool translation unit entirely in player builds. The header
 	# still provides constant-false/no-op entry points for defensive callers.
 	set(VR_CULL_VIZ_SOURCE "${REVC_ROOT}/src/render/VrCullViz.cpp")
@@ -238,6 +244,26 @@ if(NOT MIAMIVR_BRINGUP)
 	                         "${REVC_ROOT}/src/vr")
 	# The skeleton reaches into the app layer for the storage roots.
 	list(APPEND GAME_INCLUDES "${CMAKE_CURRENT_SOURCE_DIR}")
+
+	if(MIAMIVR_STEAM_FRAME)
+		# The files this port adds to or replaces in the retail folders (the
+		# tree's gamefiles/: text, frontend art, VR hands, neo/). The Frame
+		# build reads those from Documents and everything else in the retail
+		# folders from the Steam install; see src/skel/android/GameData.h. The
+		# list is compiled in, so it always matches the gamefiles/ the APK was
+		# built from.
+		file(GLOB_RECURSE GAMEFILES_LIST CONFIGURE_DEPENDS
+		     RELATIVE "${REVC_ROOT}/gamefiles" "${REVC_ROOT}/gamefiles/*")
+		list(SORT GAMEFILES_LIST)
+		set(GAMEFILES_MANIFEST "")
+		foreach(f ${GAMEFILES_LIST})
+			string(APPEND GAMEFILES_MANIFEST "\t\"${f}\",\n")
+		endforeach()
+		file(CONFIGURE OUTPUT "${CMAKE_CURRENT_BINARY_DIR}/gamefiles_manifest.inc"
+		     CONTENT "@GAMEFILES_MANIFEST@" @ONLY)
+		# gamefiles_manifest.inc
+		list(APPEND GAME_INCLUDES "${CMAKE_CURRENT_BINARY_DIR}")
+	endif()
 endif()
 
 # Steam Frame: the shared sfvr library (system layer, haptics, [vr-perf]),

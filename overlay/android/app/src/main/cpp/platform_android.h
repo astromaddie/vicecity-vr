@@ -43,7 +43,10 @@ const char *gameDataRoot(void);
 // Returns buffer.
 char *resolveGamePath(char *buffer, size_t bufferSize, const char *relative);
 
-// Case-insensitive resolution against the real on-device filenames. The game
+// Case-insensitive resolution against the real on-device filenames. On the
+// Steam Frame this is also where the game data comes from: the Steam install
+// when the game is installed there, else the Documents copy (GameData.h). The
+// result may therefore be a read-only file outside gameDataRoot(). The game
 // asks for "DATA\\GTA_VC.DAT" and "models/gta3.img" interchangeably, and ext4
 // is case sensitive, so a direct open would fail for most of the data set.
 // Returns false when nothing matches.

@@ -8,14 +8,26 @@
 #                      assembleFrame output)
 #   --tree DIR         assembled tree (default ~/VCVRFrameBuild/tree); its
 #                      gamefiles/ holds the port's text, frontend and hand assets
+#   Game data. The easy way: install Vice City (app 12110) from Steam on the
+#   Frame. The game reads it in place from the Steam library, so nothing has
+#   to be copied. Failing that it uses a copy in
+#   ~/Documents/ViceCityVR/gamedata, which is what these two options make:
 #   --game-dir DIR     your GTA Vice City PC installation: copies data TEXT anim
 #                      txd skins mp3 movies models Audio, then the port's assets,
 #                      to the headset's ~/Documents/ViceCityVR/gamedata (rsync
 #                      over SSH; about 1.5 GB the first time)
-#   --from-steam       the same, from the Steam PC version installed on the
-#                      Frame itself (app 12110, steamapps/common/Grand Theft
-#                      Auto Vice City); the copy runs on the headset
-#   --port-assets      copy only the port's assets (text, frontend, VR hands)
+#   --from-steam       install the game from Steam on the Frame; no copy needed
+#                      (the game reads it in place). --from-steam still copies
+#                      it into Documents as a fallback (app 12110,
+#                      steamapps/common/Grand Theft Auto Vice City; the copy
+#                      runs on the headset)
+#
+#   Port files. The game always reads the port's own files (text, frontend art,
+#   VR hands, neo/ and scripts: the assembled tree's gamefiles/) from
+#   Documents, never from Steam, so they are installed with every deploy that
+#   installs an APK (the APK is built against the matching list):
+#   --port-assets      install them without anything else
+#   --no-port-assets   skip them on an install
 #   --register-title   register ~/devkit-game/ViceCityVR as a persistent Steam
 #                      library title (once). When the title exists, every
 #                      install also refreshes its copy of the APK.
@@ -63,6 +75,7 @@ tree="$HOME/VCVRFrameBuild/tree"
 apk=""
 game_dir=""
 port_assets=0
+no_port_assets=0
 from_steam=0
 register=0
 install=1
@@ -83,6 +96,7 @@ while (($#)); do
 	--game-dir) game_dir="$2"; shift 2 ;;
 	--from-steam) from_steam=1; shift ;;
 	--port-assets) port_assets=1; shift ;;
+	--no-port-assets) no_port_assets=1; shift ;;
 	--register-title) register=1; shift ;;
 	--no-install) install=0; shift ;;
 	--no-launch) launch=0; shift ;;
@@ -107,11 +121,12 @@ copy_port_assets() {
 		|| die "$files lacks the port's assets (assemble the tree with tools/steam_frame/build.sh)"
 	[[ -f "$files/models/vrhands/BigHandLeft.uxrh" ]] \
 		|| die "$files/models/vrhands is missing the VR hand assets"
-	# reVC's replacement text and frontend art, and the VR hands, over the
-	# retail files (the Quest installer's order)
-	rsync -rt --chmod=Du=rwx,Dgo=rwx,Fu=rw,Fgo=rw "$files/TEXT/" "$frame_host:$data/gamedata/TEXT/"
-	rsync -rt --chmod=Du=rwx,Dgo=rwx,Fu=rw,Fgo=rw "$files/models/" "$frame_host:$data/gamedata/models/"
-	echo "port assets in ~/$data/gamedata (TEXT, models, models/vrhands)"
+	# reVC's replacement text and frontend art, the VR hands, neo/ and the
+	# scripts. The game reads these from here even when the retail data comes
+	# from Steam: the APK lists every file of this folder as a port file.
+	ssh_frame "mkdir -p ~/$data/gamedata && chmod 777 ~/$data ~/$data/gamedata"
+	rsync -rt --chmod=Du=rwx,Dgo=rwx,Fu=rw,Fgo=rw "$files/" "$frame_host:$data/gamedata/"
+	echo "port assets in ~/$data/gamedata ($(cd "$files" && ls | tr '\n' ' '))"
 }
 
 if [[ -n "$game_dir" ]]; then
@@ -133,7 +148,7 @@ if [[ -n "$game_dir" ]]; then
 		echo "copying $name ..."
 		rsync -rt --chmod=Du=rwx,Dgo=rwx,Fu=rw,Fgo=rw "$folder/" "$frame_host:$data/gamedata/$name/"
 	done
-	copy_port_assets
+	port_assets=1
 elif ((from_steam)); then
 	# Copy on the headset: Steam's install is outside ~/Documents, which is
 	# all Lepton can see. Folder names are matched case-insensitively.
@@ -157,10 +172,20 @@ for want in data TEXT anim txd skins mp3 movies models Audio; do
 	rsync -rt --chmod=Du=rwx,Dgo=rwx,Fu=rw,Fgo=rw "$found/" "$HOME/$data/gamedata/$want/"
 done
 SH
+	port_assets=1
+fi
+
+# The port's own files. Installed by default with the APK (they belong
+# together), or on request. When it is only the default, a headset we cannot
+# reach over SSH is a warning, not a failure: the install itself goes over adb.
+if ((port_assets)); then
 	copy_port_assets
-elif ((port_assets)); then
-	ssh_frame "mkdir -p ~/$data/gamedata && chmod 777 ~/$data ~/$data/gamedata"
-	copy_port_assets
+elif ((!no_port_assets && (install || register))); then
+	if ssh_frame true 2>/dev/null; then
+		copy_port_assets
+	else
+		echo "warning: cannot reach $frame_host over SSH; the port's gamefiles were not refreshed (use --port-assets)" >&2
+	fi
 fi
 
 # ---- Unattended-test switches (vr-diag.ini in the data folder) ---------------

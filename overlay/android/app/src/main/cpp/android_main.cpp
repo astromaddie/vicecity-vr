@@ -1176,6 +1176,11 @@ android_main(android_app *app)
 		     kFrameStorageRoot, storageRoot);
 #endif
 	platform::setStorageRoot(storageRoot);
+#if MIAMIVR_GAMEDATA
+	// Find the game: the Steam install if there is one, else the copy in
+	// Documents. Logs which, once.
+	gamedata::init(platform::gameDataRoot());
+#endif
 #if MIAMIVR_STEAM_FRAME
 	// vr-diag.ini lives in the storage root; read it once here, before the
 	// session exists, because dump_frame changes the swapchain's usage flags.

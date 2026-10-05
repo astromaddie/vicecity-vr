@@ -186,9 +186,19 @@ GRAPHICS prints the request (`AUTO 2160` or the percentage), the active scale an
 the eye size, plus `DISPLAY n HZ`; LOCOMOTION prints `ACTIVE n`. The Quest keeps
 its 100% and 72 Hz defaults.
 
-**Refresh rate.** `RefreshRate` (default 120) is a request. At session start the
-game lists the rates `XR_FB_display_refresh_rate` offers and asks for the highest
-one not above the setting:
+**Refresh rate.** The app cannot change the Frame's refresh rate: SteamVR offers
+only the title's per-app rate, and only on a launch from the Steam library (an
+adb launch runs at 72). So the rate is set by the user, once, in the headset:
+
+> **Wear checklist: set ViceCityVR to 120 Hz in SteamVR's per-app settings**
+> (resolution 2160 there too). Done by the user, 2026-10-05. Editing
+> `steamvr.vrsettings` while SteamVR runs does nothing.
+
+The game does ask once. `RefreshRate` (default 120, the LOCOMOTION menu row) is
+the requested rate. When the session gets focus it lists the rates
+`XR_FB_display_refresh_rate` offers and calls `xrRequestDisplayRefreshRateFB` at
+most once per session, for the highest offered rate not above the setting, and
+never for less than the compositor already runs. No retries, no held frames:
 
 ```
 [vr] refresh: setting 120, offered {90}, requested 90
@@ -196,28 +206,19 @@ one not above the setting:
 ```
 
 The real rate is whatever SteamVR runs, measured from the frame period
-(`predictedDisplayPeriod`). If the compositor is already faster than the rate the
-list would give, the game does not ask, so it can never pull it down. While worn
-(session FOCUSED), two 10 s `[vr-perf]` windows in a row under 90% of the current
-rate step the request down 120 -> 90 -> 72:
+(`predictedDisplayPeriod`); the menu's `ACTIVE` and `DISPLAY n HZ` show it. There
+is no automatic step-down, because it could never take effect. Instead, while worn
+(session FOCUSED), after two 10 s `[vr-perf]` windows in a row under 90% of the
+display rate the game logs once per session:
 
 ```
-[vr] refresh: slow window 1 of 2 (101.3 fps, under 90% of 120 Hz)
-[vr] refresh: slow window 2 of 2 (99.8 fps, under 90% of 120 Hz)
-[vr] refresh: fallback 120 -> 90 Hz after two slow windows (99.8 fps)
+[vr] refresh: not holding 120 Hz (fps 101.3, 99.8); set ViceCityVR to 90 Hz in SteamVR per-app settings
 ```
 
-A window only counts if nothing changed the rate in it and the headset was worn
-and rendering the whole time. The step lasts until the game exits; the saved
-setting stays at 120, and touching REFRESH RATE in the menu starts over. If the
-runtime offers nothing lower, the log says so and the fallback stops.
-
-**Wear checklist: set the rate in SteamVR.** SteamVR only offers the per-app
-rate set for that Steam title, and only on a launch from the Steam library (an
-adb launch runs at 72). Once, in the headset, open SteamVR's per-app settings for
-ViceCityVR and pick 120 Hz. Editing `steamvr.vrsettings` while SteamVR runs does
-nothing. Until that is done the list will offer something lower and the game will
-ask for that.
+The number is the highest of 120 / 90 / 72 the measured frame rate would hold.
+A window only counts if the headset was worn and rendering the whole time and the
+rate did not change in it. Changing REFRESH RATE in the menu mid-session applies
+next launch.
 
 All of this is a host build, headset-unverified.
 
@@ -265,7 +266,7 @@ their game. Check first, for example with
 | Cinema screen, laser menu navigation, 3D cutscene depth (CINEMA 3D), first / third-person quick swap | **worn**, round 3 (2026-10-05): all good, "I like this a lot" |
 | Laser dot clipped to a half circle with a dither where it meets the menu (round 3) | Fixed on the host (see Menu pointer). **Not worn** |
 | Right grip also the handbrake in vehicles (round 3) | Grips now Action (L1), handbrake on A. Host build and host test. **Not worn** |
-| 120 Hz request with fallback, AUTO render scale (about 2160 per eye: 125% on a 1728 recommendation, 100% on 2160), menu shows both (round 3) | Host build. **Not worn.** Needs 120 Hz set once in SteamVR's per-app settings (section 3a) |
+| 120 Hz (per-app rate set by the user; one request per session, a log hint if it is not held), AUTO render scale (about 2160 per eye: 125% on a 1728 recommendation, 100% on 2160), menu shows both (round 3) | Host build. **Not worn.** Needs 120 Hz set once in SteamVR's per-app settings (section 3a) |
 | Individual controls, colours, performance | not yet reported |
 
 ## Menu pointer

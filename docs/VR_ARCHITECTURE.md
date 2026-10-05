@@ -186,23 +186,26 @@ Standard section 9: 120 Hz at about 2160 x 2160 per eye.
   menu afterwards stays. The Quest keeps 100% and 72 Hz. The menu's GRAPHICS row
   cycles AUTO / 100 / 125 / 150 / 175 and shows the request, active scale, eye size
   and `DISPLAY n HZ`.
-- **Refresh request.** `RefreshRate` (default 120, key `refresh_rate` in sfvr's
-  settings table, whose default moved from 90 to 120) feeds
-  `setPreferredDisplayRefreshRate`. On FOCUSED, `requestPreferredDisplayRefreshRate`
-  enumerates the offered rates and requests the highest not above the setting
-  (the lowest offered if all are higher), logging
-  `[vr] refresh: setting N, offered {...}, requested R`. The measured rate comes
-  from `predictedDisplayPeriod`, which is the truth on the Frame (the FB list can
-  disagree with the compositor, lesson 79): if it is already above the rate the
-  list would give, nothing is requested. Layers are held until the display
-  reaches the requested rate, at most about 8 s on the Frame.
-- **Fallback.** `perfPoll` watches each `[vr-perf]` window. Two in a row below
-  90% of the current rate, while FOCUSED, rendering and with no rate change in
-  between, step the target 120 -> 90 -> 72 and re-request. It is per launch; the
-  saved setting is untouched. It stops when the runtime offers nothing lower.
-- **SteamVR decides.** The compositor only offers the per-app rate set in
-  SteamVR's settings for the Steam title, so the user sets 120 there once (wear
-  checklist in STEAM_FRAME.md section 3a).
+- **Refresh request.** The app cannot change the Frame's rate: SteamVR offers only
+  the title's per-app rate. `RefreshRate` (default 120, key `refresh_rate` in
+  sfvr's settings table, whose default moved from 90 to 120) is the requested
+  rate and feeds `setPreferredDisplayRefreshRate`. On FOCUSED,
+  `requestFrameRefreshRate` enumerates the offered rates and calls
+  `xrRequestDisplayRefreshRateFB` at most once per session, for the highest not
+  above the setting, never for less than the compositor already runs, and logs
+  `[vr] refresh: setting N, offered {...}, requested R|none`. No retries, and
+  layers are never held waiting for a rate. The measured rate comes from
+  `predictedDisplayPeriod`, which is the truth on the Frame (the FB list can
+  disagree with the compositor, lesson 79).
+- **Advice, not a ladder.** `perfPoll` watches each `[vr-perf]` window. Two in a
+  row below 90% of the display rate, while FOCUSED, rendering and with no rate
+  change in between, log once per session
+  `[vr] refresh: not holding N Hz (fps X, Y); set ViceCityVR to M Hz in SteamVR per-app settings`,
+  M being the highest of 120 / 90 / 72 the measured fps would hold. Nothing is
+  requested.
+- **SteamVR decides.** The user sets ViceCityVR to 120 Hz (and resolution 2160) in
+  SteamVR's per-app settings (wear checklist in STEAM_FRAME.md section 3a; done
+  2026-10-05).
 
 Host build only, none of it worn.
 
@@ -223,7 +226,7 @@ Host build only, none of it worn.
 | Cinema screen, laser menu navigation, CINEMA 3D depth and the first / third-person swap | **worn**, round 3 (2026-10-05): all good, "I like this a lot" |
 | Laser dot half-hidden at the menu (round 3): dot lies on the surface, beam stops short | host build. **Not worn** |
 | Grips in vehicles are Action (L1), handbrake on A only (round 3) | host build and `check_bindings.py`. **Not worn** |
-| 120 Hz request and fallback, AUTO render scale (about 2160 per eye), menu readouts (round 3) | host build. **Not worn**; needs the per-app 120 Hz set in SteamVR |
+| 120 Hz (per-app, one request per session, log hint if not held), AUTO render scale (about 2160 per eye), menu readouts (round 3) | host build. **Not worn**; needs the per-app 120 Hz set in SteamVR |
 | Stereo eye dumps at 0, 90 and 180 degrees of yaw | **not run** |
 | Individual controls (View recentre, D-pad, Index fallback), colour correctness, performance numbers | not reported on yet |
 
@@ -232,6 +235,6 @@ Host build only, none of it worn.
 - Run phase 0/1 on the device. This needs the Steam download to finish and an idle headset.
 - Rendering and the game step only after `APP_CMD_RESUME` (`AppState.resumed`). If Lepton never sends it, nothing draws. Check this on the first run.
 - Comfort set, the standard's turn settings, the VR settings page and "Quit to Steam" all follow the Quest port's own menu for now. Map them in a later pass.
-- Wear the display change: set 120 Hz for ViceCityVR in SteamVR's per-app settings, launch from the Steam library, and check `[vr] refresh:`, `render scale AUTO` and `per-eye render target: 2160x2160` and `[vr-perf]` (fps, missed) in the log. If 120 Hz does not hold, the fallback steps down and logs it; the measurement then decides whether the default should drop to 90 (standard section 9).
+- Wear the display change: set 120 Hz for ViceCityVR in SteamVR's per-app settings, launch from the Steam library, and check `[vr] refresh:`, `render scale AUTO` and `per-eye render target: 2160x2160` and `[vr-perf]` (fps, missed) in the log. If 120 Hz does not hold, the log says which per-app rate to set instead; the measurement then decides whether the recommended rate should drop to 90 (standard section 9).
 - `XR_META_performance_metrics` is absent on SteamVR, so the in-menu GPU line reads from Vulkan.
 - `SaveProvider` still serves the app-dir saves. On the Frame, saves are in `~/Documents/ViceCityVR/userfiles`, reachable over SSH.

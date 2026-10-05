@@ -369,15 +369,13 @@ struct State
 	// The compositor's real rate, from predictedDisplayPeriod (0 until known).
 	float measuredRefreshHz = 0.0f;
 #if MIAMIVR_STEAM_FRAME
-	// The player's setting (vr_settings "RefreshRate"); targetRefreshRateHz is
-	// this unless the slow-frame fallback has stepped it down.
-	float refreshSettingHz = kTargetDisplayRefreshRateHz;
-	// The compositor already runs faster than anything we would ask for, so no
-	// request is made (never let the app's own request downgrade it).
-	bool refreshRequestSkipped = false;
-	bool refreshFallbackStepped = false;
-	bool refreshFallbackExhausted = false;
+	// The app cannot change the Frame's refresh rate (SteamVR offers only the
+	// title's per-app rate), so at most one request is made per session, and
+	// the slow-frame check below only advises.
+	bool refreshRequestedThisSession = false;
+	bool refreshWarned = false;
 	int refreshLowWindows = 0;
+	double refreshLowFps = 0.0;
 #endif
 	float elapsed = 0.0f;
 
@@ -2854,7 +2852,6 @@ struct PerfState
 PerfState gPerf;
 
 float effectiveRefreshHz(void);
-bool requestPreferredDisplayRefreshRate(void);
 
 void
 perfTaintWindow(void)
@@ -2862,20 +2859,20 @@ perfTaintWindow(void)
 	gPerf.windowTainted = true;
 }
 
-// Refresh-rate fallback (standard section 9): two consecutive 10 s windows
-// below 90% of the current rate while worn (session FOCUSED) step the request
-// down 120 -> 90 -> 72. The step lasts for this launch; the player's setting
-// is left alone, and changing it in the VR menu starts over.
+// Standard section 9: after two consecutive 10 s windows below 90% of the
+// display rate while worn (session FOCUSED), say once per session that the rate
+// is not being held and which per-app rate to set in SteamVR. Nothing is
+// requested: the app cannot change the rate. A window only counts if the
+// headset was worn and rendering all through it and the rate did not change.
 void
 perfRefreshWindowEnded(unsigned long frames, double elapsedS)
 {
 	const bool tainted = gPerf.windowTainted;
 	gPerf.windowTainted = false;
-	if(!g.hasRefreshRateExt || g.requestRefreshRate == nullptr ||
-	   g.refreshFallbackExhausted)
+	if(g.refreshWarned)
 		return;
 	const float rate = effectiveRefreshHz();
-	if(tainted || rate < 60.0f || elapsedS <= 0.0 || !g.refreshRateReadyForFrames){
+	if(tainted || rate < 60.0f || elapsedS <= 0.0){
 		g.refreshLowWindows = 0;
 		return;
 	}
@@ -2884,41 +2881,23 @@ perfRefreshWindowEnded(unsigned long frames, double elapsedS)
 		g.refreshLowWindows = 0;
 		return;
 	}
-	g.refreshLowWindows++;
-	LOGI("[vr] refresh: slow window %d of 2 (%.1f fps, under 90%% of %.0f Hz)",
-	     g.refreshLowWindows, fps, rate);
-	if(g.refreshLowWindows < 2)
+	if(++g.refreshLowWindows < 2){
+		g.refreshLowFps = fps;
 		return;
-	g.refreshLowWindows = 0;
-	static const float ladder[] = { 120.0f, 90.0f, 72.0f };
-	float next = 0.0f;
-	for(float step : ladder)
-		if(step < rate - 1.0f){
-			next = step;
+	}
+	// The highest standard rate the measured frame rate would hold.
+	static const int standard[] = { 120, 90, 72 };
+	double lowest = fps < g.refreshLowFps ? fps : g.refreshLowFps;
+	int recommended = 72;
+	for(int hz : standard)
+		if(lowest >= 0.9*hz){
+			recommended = hz;
 			break;
 		}
-	if(next <= 0.0f){
-		LOGI("[vr] refresh: already at %.0f Hz, nothing lower to step to", rate);
-		g.refreshFallbackExhausted = true;
-		return;
-	}
-	LOGI("[vr] refresh: fallback %.0f -> %.0f Hz after two slow windows",
-	     rate, next);
-	g.refreshFallbackStepped = true;
-	g.targetRefreshRateHz = next;
-	g.requestedRefreshRateHz = 0.0f;
-	g.refreshRequestSkipped = false;
-	g.refreshRateRetryCount = 0;
-	g.nextRefreshRateRetryTime = 0;
-	g.refreshRateRequestAttempted = true;
-	requestPreferredDisplayRefreshRate();
-	g.refreshRateRetryCount = 1;
-	if(g.requestedRefreshRateHz >= rate - 0.5f){
-		// The runtime offers nothing below what it is already doing.
-		LOGI("[vr] refresh: no lower rate offered, fallback stops at %.0f Hz",
-		     rate);
-		g.refreshFallbackExhausted = true;
-	}
+	g.refreshWarned = true;
+	LOGI("[vr] refresh: not holding %.0f Hz (fps %.1f, %.1f); set ViceCityVR to "
+	     "%d Hz in SteamVR per-app settings", rate, g.refreshLowFps, fps,
+	     recommended);
 }
 
 double
@@ -2938,7 +2917,7 @@ perfPoll(void)
 	char line[256];
 	const double now = diagNowSeconds();
 	// Only whole windows under a worn, rendering session count towards the
-	// refresh fallback.
+	// refresh advice.
 	if(g.sessionState != XR_SESSION_STATE_FOCUSED || !g.diagShouldRender)
 		gPerf.windowTainted = true;
 	const unsigned long frames = gPerf.perf.frames;
@@ -3462,19 +3441,82 @@ effectiveRefreshHz(void)
 bool
 refreshAtGoal(float reported)
 {
-	const float goal = refreshGoalHz();
-	if(fabsf(reported - goal) < 0.5f)
-		return true;
-#if MIAMIVR_STEAM_FRAME
-	if(g.measuredRefreshHz > 0.0f && fabsf(g.measuredRefreshHz - goal) < 3.0f)
-		return true;
-#endif
-	return false;
+	return fabsf(reported - refreshGoalHz()) < 0.5f;
 }
+
+#if MIAMIVR_STEAM_FRAME
+// The Frame's one refresh request per session (standard section 9). SteamVR
+// offers only the title's per-app rate, so this asks only for an offered rate,
+// the highest not above the RefreshRate setting, and never for less than the
+// compositor already runs. No retries, no holding frames, no fallback.
+bool
+requestFrameRefreshRate(void)
+{
+	if(g.refreshRequestedThisSession)
+		return false;
+	g.refreshRequestedThisSession = true;
+	if(!g.hasRefreshRateExt || g.enumerateRefreshRates == nullptr ||
+	   g.getRefreshRate == nullptr || g.requestRefreshRate == nullptr){
+		LOGI("[vr] refresh: setting %.0f, no XR_FB_display_refresh_rate, "
+		     "requested none (compositor at %.0f Hz)",
+		     g.targetRefreshRateHz, effectiveRefreshHz());
+		return false;
+	}
+	uint32_t count = 0;
+	std::vector<float> rates;
+	if(XR_SUCCEEDED(g.enumerateRefreshRates(g.session, 0, &count, nullptr)) &&
+	   count > 0){
+		rates.resize(count);
+		if(XR_FAILED(g.enumerateRefreshRates(g.session, count, &count,
+		                                     rates.data())))
+			rates.clear();
+	}
+	char offered[160];
+	size_t used = 0;
+	offered[0] = '\0';
+	float best = 0.0f;
+	for(size_t i = 0; i < rates.size(); i++){
+		if(rates[i] <= g.targetRefreshRateHz + 0.5f && rates[i] > best)
+			best = rates[i];
+		if(used < sizeof(offered) - 1)
+			used += (size_t)snprintf(offered + used, sizeof(offered) - used,
+			                         "%s%.0f", i ? ", " : "", rates[i]);
+	}
+	if(used >= sizeof(offered))
+		offered[sizeof(offered) - 1] = '\0';
+	const float running = effectiveRefreshHz();
+	if(best <= 0.0f){
+		LOGI("[vr] refresh: setting %.0f, offered {%s}, requested none "
+		     "(nothing offered at or below the setting; compositor at %.0f Hz)",
+		     g.targetRefreshRateHz, offered, running);
+		return false;
+	}
+	if(g.measuredRefreshHz > 0.0f && g.measuredRefreshHz >= best - 2.0f){
+		LOGI("[vr] refresh: setting %.0f, offered {%s}, requested none "
+		     "(compositor already at %.0f Hz)",
+		     g.targetRefreshRateHz, offered, g.measuredRefreshHz);
+		return false;
+	}
+	LOGI("[vr] refresh: setting %.0f, offered {%s}, requested %.0f",
+	     g.targetRefreshRateHz, offered, best);
+	perfTaintWindow();
+	const XrResult result = g.requestRefreshRate(g.session, best);
+	g.requestedRefreshRateHz = best;
+	float after = 0.0f;
+	if(XR_SUCCEEDED(g.getRefreshRate(g.session, &after)) && after > 0.0f)
+		g.currentRefreshRateHz = after;
+	LOGI("[vr] refresh: request result %d, runtime reports %.1f Hz", (int)result,
+	     g.currentRefreshRateHz);
+	return XR_SUCCEEDED(result);
+}
+#endif
 
 bool
 requestPreferredDisplayRefreshRate(void)
 {
+#if MIAMIVR_STEAM_FRAME
+	return requestFrameRefreshRate();
+#endif
 	if(!g.hasRefreshRateExt || g.enumerateRefreshRates == nullptr ||
 	   g.getRefreshRate == nullptr || g.requestRefreshRate == nullptr)
 		return false;
@@ -3487,22 +3529,6 @@ requestPreferredDisplayRefreshRate(void)
 		// target directly and let the runtime validate it; unsupported
 		// values fail cleanly with DISPLAY_REFRESH_RATE_UNSUPPORTED.
 		g.requestedRefreshRateHz = g.targetRefreshRateHz;
-#if MIAMIVR_STEAM_FRAME
-		g.refreshRequestSkipped = false;
-		if(!g.refreshFallbackStepped &&
-		   g.measuredRefreshHz > g.targetRefreshRateHz + 2.0f){
-			LOGI("[vr] refresh: setting %.0f, offered {}, requested none "
-			     "(compositor already at %.0f Hz)",
-			     g.refreshSettingHz, g.measuredRefreshHz);
-			g.refreshRequestSkipped = true;
-			g.requestedRefreshRateHz = g.measuredRefreshHz;
-			g.currentRefreshRateHz = g.measuredRefreshHz;
-			return true;
-		}
-		LOGI("[vr] refresh: setting %.0f, offered {}, requested %.0f",
-		     g.refreshSettingHz, g.targetRefreshRateHz);
-		perfTaintWindow();
-#endif
 		result = g.requestRefreshRate(g.session, g.targetRefreshRateHz);
 		float actual = 0.0f;
 		if(XR_SUCCEEDED(g.getRefreshRate(g.session, &actual)) &&
@@ -3532,49 +3558,10 @@ requestPreferredDisplayRefreshRate(void)
 			targetDistance = distance;
 		}
 	}
-#if MIAMIVR_STEAM_FRAME
-	// The highest offered rate that is not above the target; when every
-	// offered rate is higher, the lowest of them.
-	{
-		float best = 0.0f, lowest = rates[0];
-		char offered[160];
-		size_t used = 0;
-		offered[0] = '\0';
-		for(uint32_t i = 0; i < count; i++){
-			if(rates[i] <= g.targetRefreshRateHz + 0.5f && rates[i] > best)
-				best = rates[i];
-			if(rates[i] < lowest)
-				lowest = rates[i];
-			if(used < sizeof(offered) - 1)
-				used += (size_t)snprintf(offered + used, sizeof(offered) - used,
-				                         "%s%.0f", i ? ", " : "", rates[i]);
-		}
-		target = best > 0.0f ? best : lowest;
-		if(used >= sizeof(offered))
-			offered[sizeof(offered) - 1] = '\0';
-		g.refreshRequestSkipped = false;
-		// Already running faster than this request (SteamVR applies the per-app
-		// rate, and the list can name a lower one): asking would downgrade it.
-		if(!g.refreshFallbackStepped && g.measuredRefreshHz > target + 2.0f){
-			LOGI("[vr] refresh: setting %.0f, offered {%s}, requested none "
-			     "(compositor already at %.0f Hz)",
-			     g.refreshSettingHz, offered, g.measuredRefreshHz);
-			g.refreshRequestSkipped = true;
-			g.requestedRefreshRateHz = g.measuredRefreshHz;
-			g.currentRefreshRateHz = g.measuredRefreshHz;
-			return true;
-		}
-		LOGI("[vr] refresh: setting %.0f, offered {%s}, requested %.0f",
-		     g.refreshSettingHz, offered, target);
-	}
-#endif
 	g.requestedRefreshRateHz = target;
 
 	float before = 0.0f;
 	const XrResult beforeResult = g.getRefreshRate(g.session, &before);
-#if MIAMIVR_STEAM_FRAME
-	perfTaintWindow();
-#endif
 	result = g.requestRefreshRate(g.session, target);
 	float after = 0.0f;
 	const XrResult afterResult = g.getRefreshRate(g.session, &after);
@@ -4215,22 +4202,18 @@ getInput(ControllerInput *out)
 void
 setPreferredDisplayRefreshRate(float hz)
 {
-#if MIAMIVR_STEAM_FRAME
-	const float current = g.refreshSettingHz;
-#else
-	const float current = g.targetRefreshRateHz;
-#endif
-	if(hz < 60.0f || hz > 144.0f || fabsf(hz - current) < 0.5f)
+	if(hz < 60.0f || hz > 144.0f ||
+	   fabsf(hz - g.targetRefreshRateHz) < 0.5f)
 		return;
 	g.targetRefreshRateHz = hz;
-	g.requestedRefreshRateHz = 0.0f;
 #if MIAMIVR_STEAM_FRAME
-	g.refreshSettingHz = hz;
-	g.refreshRequestSkipped = false;
-	g.refreshFallbackStepped = false;
-	g.refreshFallbackExhausted = false;
-	g.refreshLowWindows = 0;
+	// The one request of the session may already be spent; the setting is
+	// then picked up next launch.
+	LOGI("[vr] refresh: setting %.0f Hz%s", hz,
+	     g.refreshRequestedThisSession ? " (applies next launch)" : "");
+	return;
 #endif
+	g.requestedRefreshRateHz = 0.0f;
 	// Re-arm the retry pump in renderFrame; it re-requests on the next
 	// focused frame and keeps retrying until the display confirms.
 	g.refreshRateRetryCount = 0;
@@ -4376,15 +4359,17 @@ pollEvents(void)
 					XR_VIEW_CONFIGURATION_TYPE_PRIMARY_STEREO;
 				if(XR_SUCCEEDED(xrBeginSession(g.session, &beginInfo))){
 					g.running = true;
+#if MIAMIVR_STEAM_FRAME
+					// Frames are never held for a rate change on the Frame.
+					g.refreshRateReadyForFrames = true;
+#else
 					g.refreshRateReadyForFrames = !g.hasRefreshRateExt;
+#endif
 					applyAndroidThreadSettings("session READY");
 					g.refreshRateRequestAttempted = false;
 					g.refreshRateRetryCount = 0;
 					g.nextRefreshRateRetryTime = 0;
 					g.requestedRefreshRateHz = 0.0f;
-#if MIAMIVR_STEAM_FRAME
-					g.refreshRequestSkipped = false;
-#endif
 					applyPerformanceMode(true);
 					applyGpuPerformanceMode(true);
 				}
@@ -4400,9 +4385,14 @@ pollEvents(void)
 					g.refreshRateRequestAttempted = true;
 					const bool requested =
 						requestPreferredDisplayRefreshRate();
+#if MIAMIVR_STEAM_FRAME
+					g.refreshRateReadyForFrames = true;
+					(void)requested;
+#else
 					g.refreshRateReadyForFrames =
 						!requested ||
 						refreshAtGoal(g.currentRefreshRateHz);
+#endif
 					if(!g.refreshRateReadyForFrames)
 						LOGI("holding application layers until display "
 						     "refresh settles at %.1f Hz",
@@ -4460,18 +4450,19 @@ pollEvents(void)
 			const XrEventDataDisplayRefreshRateChangedFB &changed =
 				*(const XrEventDataDisplayRefreshRateChangedFB *)&event;
 			g.currentRefreshRateHz = changed.toDisplayRefreshRate;
-			g.refreshRateReadyForFrames =
-				refreshAtGoal(changed.toDisplayRefreshRate);
 			LOGI("display refresh changed: %.1f -> %.1f Hz",
 			     changed.fromDisplayRefreshRate,
 			     changed.toDisplayRefreshRate);
 #if MIAMIVR_STEAM_FRAME
 			perfTaintWindow();
-#endif
+#else
+			g.refreshRateReadyForFrames =
+				refreshAtGoal(changed.toDisplayRefreshRate);
 			if(!g.refreshRateReadyForFrames){
 				g.refreshRateRetryCount = 0;
 				g.nextRefreshRateRetryTime = 0;
 			}
+#endif
 			break;
 		}
 		default:
@@ -4588,6 +4579,7 @@ renderFrame(void)
 	// A focused Quest session can acknowledge a rate request before the display
 	// has actually switched. Retry at a low rate for a bounded period, stopping
 	// as soon as the runtime confirms the stable 72 Hz target.
+#if !MIAMIVR_STEAM_FRAME
 	if(g.sessionState == XR_SESSION_STATE_FOCUSED && g.hasRefreshRateExt &&
 	   g.getRefreshRate != nullptr && g.refreshRateRetryCount < 8 &&
 	   (g.nextRefreshRateRetryTime == 0 ||
@@ -4605,21 +4597,9 @@ renderFrame(void)
 			g.refreshRateRetryCount++;
 			g.nextRefreshRateRetryTime =
 				frameState.predictedDisplayTime + (XrTime)1000000000;
-#if MIAMIVR_STEAM_FRAME
-			// The Frame's runtime may never report the rate asked for (SteamVR
-			// applies its per-app one); do not hold the picture for that.
-			if(g.refreshRequestSkipped ||
-			   (g.refreshRateRetryCount >= 8 && !g.refreshRateReadyForFrames)){
-				g.refreshRateReadyForFrames = true;
-				g.refreshRateRetryCount = 8;
-				LOGI("[vr] refresh: %s, running at %.1f Hz",
-				     g.refreshRequestSkipped ?
-				         "request skipped" : "not confirmed after 8 tries",
-				     effectiveRefreshHz());
-			}
-#endif
 		}
 	}
+#endif
 
 	XrFrameBeginInfo beginInfo = { XR_TYPE_FRAME_BEGIN_INFO };
 	if(XR_FAILED(xrBeginFrame(g.session, &beginInfo)))

@@ -7,7 +7,10 @@ kit's Quest build already uses the Khronos loader, Vulkan through
 build with a Gradle build type, `frame`, on top. The Quest builds are
 unchanged. What differs, and why, is in [VR_ARCHITECTURE.md](VR_ARCHITECTURE.md).
 
-Status: it plays on the Frame (first wear, 2026-10-03). See section 5.
+Status: it plays on the Frame (first wear, 2026-10-03). The cinema screen,
+laser menu navigation, 3D cutscenes and the first/third-person quick swap have
+been worn and liked (round 3, 2026-10-05). Round 3's fixes are host builds,
+not worn yet. See sections 5 and 6.
 
 ## 1. Build on a Mac (Apple Silicon) or Linux
 
@@ -111,9 +114,19 @@ Frame on Wi-Fi; over USB networking use `steamos@10.86.200.233`.
 | L D-pad | The game's D-pad |
 | Both grips + Menu | VR menu (settings, controls, cheats, graphics) |
 | A B X Y, sticks, triggers, grips | As on the Quest. X and Y are now on the right controller |
+| Grips in a vehicle | The game's Action control (L1, "pick up / radio"), same as the left grip. Not the handbrake |
+| A in a vehicle | Handbrake (it still is) |
 
 The old both-stick-clicks recentre is off on the Frame. The stick clicks stay
 game actions.
+
+**Grips in a vehicle.** The right grip used to be the handbrake as well as A,
+which is not what a grip is for here. In a car or on a bike both grips now press
+L1, the game's Action control, in pad modes 0 and 1. In pad modes 2 and 3 L1
+leaves the vehicle or is the handbrake, so the grips do nothing there. On foot
+nothing changed: the grips go through your CONTROLS bindings. The VR driving
+gestures (hands on the wheel, grips with B for the drive-by window) are as before.
+Host build, not worn.
 
 **Third person.** Press View briefly during play to switch between first person and third person. Pick the third-person style in the VR menu under LOCOMOTION > VIEW:
 
@@ -136,6 +149,64 @@ the scene has depth behind it, like a 3D film. To change it, open the VR menu
 and go to LOCOMOTION > CUTSCENES. The row steps through CINEMA SCREEN (flat),
 CINEMA 3D SUBTLE, CINEMA 3D, CINEMA 3D DEEP, and STEREO (immersive, inside the
 shot).
+
+## 3a. Display: 120 Hz, about 2160 per eye
+
+The Frame's panel is about 2160 x 2160 per eye. SteamVR recommends 1728 x 1728
+there, so the Frame build defaults to a **125% render scale**, which makes the
+eye image 2160 x 2160. The eye swapchain is created at that size and the game
+renders straight into it, with no larger render and no blit down. The log shows
+it:
+
+```
+[vr] display defaults moved to 125% render scale and 120 Hz: applied   (once, on an older settings file)
+render scale requested: 125% (recommended 1728x1728, runtime max ...)
+per-eye render target: 2160x2160 (requested 125%, selected 125%, effective 125.00%, fallback NONE)
+stable native scene=2160x2160 output=2160x2160 temporal=off msaa=1x
+```
+
+Settings files written by the first Frame builds carry 100% and 72 Hz from the
+Quest baseline; those two values are moved to 125% and 120 Hz once
+(`FrameDisplayProfileVersion` in `vr_settings.ini`). After that the VR menu's
+choices stick: GRAPHICS > OUTPUT REQUEST (100 / 125 / 150 / 175%, restart to
+apply) and LOCOMOTION > REFRESH RATE. Both pages show the real values now:
+GRAPHICS prints the eye size and `DISPLAY n HZ`, LOCOMOTION prints `ACTIVE n`.
+The Quest keeps its 100% and 72 Hz defaults.
+
+**Refresh rate.** `RefreshRate` (default 120) is a request. At session start the
+game lists the rates `XR_FB_display_refresh_rate` offers and asks for the highest
+one not above the setting:
+
+```
+[vr] refresh: setting 120, offered {90}, requested 90
+[vr] refresh: setting 120, offered {120}, requested none (compositor already at 120 Hz)
+```
+
+The real rate is whatever SteamVR runs, measured from the frame period
+(`predictedDisplayPeriod`). If the compositor is already faster than the rate the
+list would give, the game does not ask, so it can never pull it down. While worn
+(session FOCUSED), two 10 s `[vr-perf]` windows in a row under 90% of the current
+rate step the request down 120 -> 90 -> 72:
+
+```
+[vr] refresh: slow window 1 of 2 (101.3 fps, under 90% of 120 Hz)
+[vr] refresh: slow window 2 of 2 (99.8 fps, under 90% of 120 Hz)
+[vr] refresh: fallback 120 -> 90 Hz after two slow windows (99.8 fps)
+```
+
+A window only counts if nothing changed the rate in it and the headset was worn
+and rendering the whole time. The step lasts until the game exits; the saved
+setting stays at 120, and touching REFRESH RATE in the menu starts over. If the
+runtime offers nothing lower, the log says so and the fallback stops.
+
+**Wear checklist: set the rate in SteamVR.** SteamVR only offers the per-app
+rate set for that Steam title, and only on a launch from the Steam library (an
+adb launch runs at 72). Once, in the headset, open SteamVR's per-app settings for
+ViceCityVR and pick 120 Hz. Editing `steamvr.vrsettings` while SteamVR runs does
+nothing. Until that is done the list will offer something lower and the game will
+ask for that.
+
+All of this is a host build, headset-unverified.
 
 ## 4. Unattended testing (nothing worn)
 
@@ -178,6 +249,10 @@ their game. Check first, for example with
 | CINEMA 3D cutscenes (projection layer) | **worn** (user: "it works now", 2026-10-03) |
 | Third-person view: both styles and the View toggle | **worn**, toggled repeatedly in the log (2026-10-03); per-control feedback not given |
 | Freeze at the third intro scene load (17:32, 2026-10-03) | seen once; the next new game loaded in 0.07 s. **Open**: the watchdog now logs `[vr-stall]` traces |
+| Cinema screen, laser menu navigation, 3D cutscene depth (CINEMA 3D), first / third-person quick swap | **worn**, round 3 (2026-10-05): all good, "I like this a lot" |
+| Laser dot clipped to a half circle with a dither where it meets the menu (round 3) | Fixed on the host (see Menu pointer). **Not worn** |
+| Right grip also the handbrake in vehicles (round 3) | Grips now Action (L1), handbrake on A. Host build and host test. **Not worn** |
+| 120 Hz request with fallback, 125% render scale (2160 per eye), menu shows both (round 3) | Host build. **Not worn.** Needs 120 Hz set once in SteamVR's per-app settings (section 3a) |
 | Individual controls, colours, performance | not yet reported |
 
 ## Menu pointer
@@ -186,10 +261,22 @@ The right controller's ray works as a mouse in the game's menus (main menu,
 pause, options) and as a pointer in the VR menu. Point to highlight, pull the
 trigger to click. On a VR menu row, clicking near the left or right edge steps
 the value down or up. The D-pad and A still work. The beam and dot go to
-SteamVR as the last two layers, so they always sit on top of the menu, the
-cinema screen and the world. Checked on the Frame unattended (title menu and
-VR menu dumps: the row under the dot highlights, beam and dot on top), not
-worn yet.
+SteamVR as the last two layers, so they sit over the menu, the cinema screen and
+the world. Laser navigation was worn in round 3 and the user liked it. Checked
+on the Frame unattended before that (title menu and VR menu dumps: the row under
+the dot highlights, beam and dot on top).
+
+**Round 3 fix: the dot was a half circle.** SteamVR depth-composites quad layers
+that cross each other. The dot faced the head but sat exactly on the hit point,
+so on a tilted panel half of it was behind the panel and hidden, with a dither
+where the two met. The beam's last few centimetres crossed the plane the same
+way. Now the dot takes the orientation of the surface it hit, so it lies flat on
+the menu or the screen, and sits 12 mm in front of it (towards the head). The
+beam stops short of the surface, pulled back along the ray by 2 cm divided by
+how square-on the ray is (never less than a quarter, and the beam keeps at least
+3 cm). A ray that hits nothing is as before, and the dot keeps its size rule.
+`vr-pointer.bmp` is built from the submitted poses, so it shows the new layout.
+Host build, not worn yet.
 
 Test switches in `vr-diag.ini`: `diag_pointer=frontend|vrmenu` with
 `diag_pointer_u` / `diag_pointer_v` parks a ray on that surface,

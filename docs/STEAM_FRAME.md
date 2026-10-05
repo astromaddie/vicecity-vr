@@ -259,14 +259,14 @@ their game. Check first, for example with
 | Frame bindings use only real component paths on the right hands, with unique action names | host test |
 | Lepton is API 30, Vulkan 1.1, no headtracking feature; SteamVR runtime manifest present | device, read-only |
 | Installs and plays from the ViceCityVR Steam title; data and settings in `~/Documents/ViceCityVR` | **worn** (user report, 2026-10-03), before the Steam-in-place change below |
-| Reading the game from the Steam install in place, falling back to the copy in Documents | host build and a host test of the lookup. The Steam path has not been tried on the headset. The fallback is what runs today, because Vice City isn't installed in Steam on the Frame right now, and it hasn't been re-run on the device since the change |
+| Reading the game from the Steam install in place, falling back to the copy in Documents | device, nobody wearing it, on the fallback (new game into the intro, 2026-10-05). The Steam path has a host test only: Vice City isn't installed in Steam on the Frame |
 | CINEMA 3D cutscenes (projection layer) | **worn** (user: "it works now", 2026-10-03) |
 | Third-person view: both styles and the View toggle | **worn**, toggled repeatedly in the log (2026-10-03); per-control feedback not given |
-| Freeze at the third intro scene load (17:32, 2026-10-03) | seen once; the next new game loaded in 0.07 s. **Open**: the watchdog now logs `[vr-stall]` traces |
+| Freeze loading the first scene (seen 2026-10-03, caught again 2026-10-05) | The watchdog showed `CdStreamSync` waiting for ever on the stream thread: a lost wake-up in the stream hand-off. Fixed (ordered hand-off, timed wait). One clean unattended new game since; it was intermittent, so watch for it |
 | Cinema screen, laser menu navigation, 3D cutscene depth (CINEMA 3D), first / third-person quick swap | **worn**, round 3 (2026-10-05): all good, "I like this a lot" |
-| Laser dot clipped to a half circle with a dither where it meets the menu (round 3) | Fixed on the host (see Menu pointer). **Not worn** |
+| Laser dot clipped to a half circle with a dither where it meets the menu (round 3) | Fixed (see Menu pointer). Device dumps show beam and dot over the title menu and the VR menu, but a flat dump can't show the depth clipping, so this needs a wear |
 | Right grip also the handbrake in vehicles (round 3) | Grips now Action (L1), handbrake on A. Host build and host test. **Not worn** |
-| 120 Hz (per-app rate set by the user; one request per session, a log hint if it is not held), AUTO render scale (about 2160 per eye: 125% on a 1728 recommendation, 100% on 2160), menu shows both (round 3) | Host build. **Not worn.** Needs 120 Hz set once in SteamVR's per-app settings (section 3a) |
+| 120 Hz (per-app rate set by the user; one request per session, a log hint if it is not held), AUTO render scale (about 2160 per eye: 125% on a 1728 recommendation, 100% on 2160), menu shows both (round 3) | Device, nobody wearing it (2026-10-05): AUTO picked 100% for 2160 x 2160; the intro held 120.0 fps, 0 missed, about 1.2 ms of game CPU a frame; menus 117–120. Not worn yet; open play not measured |
 | Individual controls, colours, performance | not yet reported |
 
 ## Menu pointer

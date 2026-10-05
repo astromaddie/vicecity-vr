@@ -102,7 +102,9 @@ bool VrFrontendPointerOwnsCursor(void);
 // and B straight from the controller for the radio, the handbrake and the
 // drive-by weapon, so a vehicle keeps the shipped assignment rather than firing
 // a moved binding alongside the gesture. The thumbsticks, the menu button and
-// the weapon triggers are outside it entirely.
+// the weapon triggers are outside it entirely. On the Steam Frame the grips are
+// the one exception in a vehicle: they drive the Action control (L1), not the
+// handbrake (see VrVehiclePadTarget in android.cpp).
 enum eVrPadSource
 {
 	VR_PAD_SOURCE_A = 0,

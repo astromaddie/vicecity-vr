@@ -13,15 +13,23 @@ tables frameBindings (Steam Frame), indexBindings (Valve Index) and bindings
 spec's, and Valve's for the Frame (as Halo CE VR, F-Zero X and GoldenEye VR
 bind it).
 
-Run: tools/steam_frame/tests/check_bindings.py [xr_vulkan_session.cpp]
-Exit 1 on a bad path, a duplicate name, or a Frame input the game needs that
-is not bound.
+It also checks the pad layout for vehicles (overlay/src/skel/android/android.cpp
+and overlay/src/vr/QuestDrivingVR.cpp): on the Frame a grip is an action/interact
+button, so in a vehicle it must drive the Action control (L1) or nothing, never
+the handbrake (R1 in the shipped pad modes), and the handbrake stays on A.
+
+Run: tools/steam_frame/tests/check_bindings.py [xr_vulkan_session.cpp [android.cpp [QuestDrivingVR.cpp]]]
+Exit 1 on a bad path, a duplicate name, a Frame input the game needs that
+is not bound, or a vehicle layout that puts the handbrake on a grip.
 """
 import re
 import sys
 from pathlib import Path
 
-SRC = Path(__file__).resolve().parents[3] / "overlay/android/app/src/main/cpp/xr_vulkan_session.cpp"
+KIT = Path(__file__).resolve().parents[3]
+SRC = KIT / "overlay/android/app/src/main/cpp/xr_vulkan_session.cpp"
+PAD_SRC = KIT / "overlay/src/skel/android/android.cpp"
+DRIVING_SRC = KIT / "overlay/src/vr/QuestDrivingVR.cpp"
 
 POSES = {"grip/pose", "aim/pose"}
 HAPTIC = {"output/haptic"}
@@ -61,6 +69,38 @@ SYSTEM_NEEDS = ["g.menuAction", "g.viewAction"]
 def tables(text):
     for m in re.finditer(r"const Binding (\w+)\[\] = \{(.*?)\n\t\};", text, re.S):
         yield m.group(1), m.group(2)
+
+
+def vehicle_grips(pad_text, driving_text):
+    """The Frame's vehicle pad layout: grips are Action (L1) or nothing, A is the handbrake."""
+    bad = 0
+    m = re.search(r"static int\s+VrVehiclePadTarget\(int source, int padMode\)\s*\{(.*?)\n\}", pad_text, re.S)
+    if not m:
+        print("FAIL: VrVehiclePadTarget not found in android.cpp")
+        return 1
+    body = m.group(1)
+    frame = body.split("#if MIAMIVR_STEAM_FRAME", 1)[-1].split("#else", 1)[0]
+    for grip in ("VR_PAD_SOURCE_LEFT_GRIP", "VR_PAD_SOURCE_RIGHT_GRIP"):
+        if grip not in frame:
+            print(f"FAIL: VrVehiclePadTarget: {grip} is not handled on the Frame")
+            bad += 1
+    targets = set(re.findall(r"VR_PAD_TARGET_(\w+)", frame))
+    if targets - {"L1", "NONE"} or "L1" not in targets:
+        print(f"FAIL: VrVehiclePadTarget: a grip may drive only Action (L1) or nothing, found {sorted(targets)}")
+        bad += 1
+    if not re.search(r"padMode == 0 \|\| padMode == 1", frame):
+        print("FAIL: VrVehiclePadTarget: L1 is a vehicle control in pad modes 2 and 3; grips must be none there")
+        bad += 1
+    apply_ = re.search(r"VrApplyPadBindings\(CControllerState \*state.*?\n\}", pad_text, re.S)
+    if not apply_ or "VrVehiclePadTarget(source, padMode)" not in apply_.group(0) or \
+       "VrPadBindingDefault" in apply_.group(0):
+        print("FAIL: VrApplyPadBindings must route vehicles through VrVehiclePadTarget")
+        bad += 1
+    if not re.search(r"MapHandbrakeToPad\(state,[^;]*input\.a\)", driving_text):
+        print("FAIL: the handbrake is no longer driven by A (QuestDrivingVR.cpp)")
+        bad += 1
+    print("vehicle pad layout: grips = Action (L1) or nothing, handbrake on A" if not bad else "")
+    return bad
 
 
 def main():
@@ -109,6 +149,9 @@ def main():
         if table not in found:
             print(f"FAIL: binding table {table} not found")
             bad += 1
+    pad = Path(sys.argv[2]) if len(sys.argv) > 2 else PAD_SRC
+    driving = Path(sys.argv[3]) if len(sys.argv) > 3 else DRIVING_SRC
+    bad += vehicle_grips(pad.read_text(), driving.read_text())
     print("bindings OK" if not bad else f"{bad} problem(s)")
     return 1 if bad else 0
 

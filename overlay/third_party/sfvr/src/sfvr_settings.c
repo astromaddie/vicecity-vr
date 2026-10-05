@@ -38,7 +38,7 @@ static const sfvr_setting_key keys[] = {
 	FLOAT_KEY("haptics", 0.6, 0.0, 1.0),
 	ENUM_KEY("dominant_hand", 0.0, hand_values, 1.0),
 	/* section 9: display */
-	INT_KEY("refresh_rate", 90.0, 72.0, 144.0),
+	INT_KEY("refresh_rate", 120.0, 72.0, 144.0),
 	FLOAT_KEY("resolution_scale", 1.0, 0.75, 1.5),
 	/* section 8: diagnostics (config/env only, never in the menu) */
 	BOOL_KEY("force_render", 0.0),

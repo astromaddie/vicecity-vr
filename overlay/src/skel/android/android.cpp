@@ -393,6 +393,27 @@ PadTargetField(CControllerState *state, int target)
 	return nil;
 }
 
+// What a button drives while the player is in a vehicle: the shipped
+// assignment, except for the grips on the Steam Frame build (the Quest keeps
+// the shipped one). A grip is an action/interact button (Steam
+// Frame wear, 2026-10-05), so it is the game's Action control, L1 ("pick up /
+// radio"), and never the handbrake. The shipped right grip is R1, which is the
+// handbrake in pad modes 0 and 1; the handbrake is A's job (QuestDrivingVR).
+// In modes 2 and 3 L1 is itself a vehicle control (exit the vehicle, the
+// handbrake), so the grips drive nothing there rather than doing that.
+static int
+VrVehiclePadTarget(int source, int padMode)
+{
+#if MIAMIVR_STEAM_FRAME
+	if(source == VR_PAD_SOURCE_LEFT_GRIP || source == VR_PAD_SOURCE_RIGHT_GRIP)
+		return (padMode == 0 || padMode == 1) ?
+			VR_PAD_TARGET_L1 : VR_PAD_TARGET_NONE;
+#else
+	(void)padMode;
+#endif
+	return VrPadBindingDefault(source);
+}
+
 void
 VrApplyPadBindings(CControllerState *state, const PadInput &input,
                    bool includeTriggers)
@@ -423,6 +444,7 @@ VrApplyPadBindings(CControllerState *state, const PadInput &input,
 	// vehicle keeps the shipped assignment.
 	const bool onFoot = FindPlayerVehicle() == nil &&
 		!CWorld::Players[CWorld::PlayerInFocus].IsPlayerInRemoteMode();
+	const int padMode = CPad::GetPad(0)->GetMode();
 
 	for(int target = VR_PAD_TARGET_NONE+1; target < VR_PAD_TARGET_COUNT;
 	    target++){
@@ -434,7 +456,7 @@ VrApplyPadBindings(CControllerState *state, const PadInput &input,
 	// later one in the table.
 	for(int source = 0; source < VR_PAD_SOURCE_COUNT; source++){
 		const int target = onFoot ?
-			VrPadBinding(source) : VrPadBindingDefault(source);
+			VrPadBinding(source) : VrVehiclePadTarget(source, padMode);
 		int16 *field = PadTargetField(state, target);
 		if(field)
 			*field = Max(*field, values[source]);

@@ -31,6 +31,9 @@ void triggerHaptic(int hand, float amplitude, float frequencyHz, float durationM
 // closest rate the runtime offers and keeps retrying until confirmed. Safe
 // to call any time.
 void setPreferredDisplayRefreshRate(float hz);
+// The rate the display is really running, in Hz: the compositor's frame period
+// when it has reported one, else what the runtime says. 0 before the session.
+float getDisplayRefreshRateHz(void);
 
 // OpenXR performance hint for the standalone runtime. Auto leaves a fresh
 // session entirely under runtime control; the two explicit modes provide

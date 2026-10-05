@@ -1113,8 +1113,13 @@ LoadVrSettings(void)
 #endif
 	{
 		static const int scales[] = { 100, 125, 150, 175 };
+#if MIAMIVR_STEAM_FRAME
+		const int savedScale = GetPrivateProfileIntA("VR", "RenderScalePercent",
+			125, ".\\vr_settings.ini");
+#else
 		const int savedScale = GetPrivateProfileIntA("VR", "RenderScalePercent",
 			100, ".\\vr_settings.ini");
+#endif
 		int best = 0;
 		for(int i = 1; i < (int)ARRAY_SIZE(scales); i++)
 			if(Abs(scales[i]-savedScale) < Abs(scales[best]-savedScale))
@@ -1306,8 +1311,15 @@ LoadVrSettings(void)
 		(int)QUEST_MOVEMENT_ORIENTATION_COUNT-1);
 	gQuestHeadBobbing = GetPrivateProfileIntA("VR", "HeadBobbing", 0,
 		".\\vr_settings.ini") != 0;
+#if MIAMIVR_STEAM_FRAME
+	// Standard section 9: 120 Hz unless the player chose otherwise. SteamVR's
+	// per-app rate decides what actually runs; see xr_vulkan_session.cpp.
+	gQuestRefreshRateHz = Min(Max(GetPrivateProfileIntA("VR",
+		"RefreshRate", 120, ".\\vr_settings.ini"), 72), 120);
+#else
 	gQuestRefreshRateHz = Min(Max(GetPrivateProfileIntA("VR",
 		"RefreshRate", 72, ".\\vr_settings.ini"), 72), 120);
+#endif
 	androidgame::SetPreferredRefreshRate(gQuestRefreshRateHz);
 	const int persistedCpuPerformanceMode = GetPrivateProfileIntA("VR",
 		"CpuPerformanceMode", QUEST_CPU_PERFORMANCE_SUSTAINED,
@@ -3802,8 +3814,16 @@ DrawQuestGraphicsPage(void)
 		DrawVrMenuText(activeScale, VR_MENU_WIDTH/2, 674, 2,
 			fallback ? 255 : 120, fallback ? 95 : 220,
 			fallback ? 85 : 255);
+#if MIAMIVR_STEAM_FRAME
+		char displayLine[160];
+		snprintf(displayLine, sizeof(displayLine),
+			"DISPLAY %.0f HZ  NATIVE SCENE  SPATIAL AA SINGLE-FRAME",
+			xrvk::getDisplayRefreshRateHz());
+		DrawVrMenuText(displayLine, VR_MENU_WIDTH/2, 692, 2, 170, 190, 210);
+#else
 		DrawVrMenuText("NATIVE SCENE  SPATIAL AA SINGLE-FRAME",
 			VR_MENU_WIDTH/2, 692, 2, 170, 190, 210);
+#endif
 		if(scaleStatus.previousFallbackReason !=
 		   xrvk::RENDER_SCALE_FALLBACK_NONE){
 			char recoveredScale[192];
@@ -3832,6 +3852,14 @@ DrawQuestGraphicsPage(void)
 	else if(gQuestRenderScalePercent >= 150)
 		DrawVrMenuText("150/175% IS EXPERIMENTAL: HIGH GPU AND MEMORY LOAD",
 			VR_MENU_WIDTH/2, 746, 2, 255, 120, 95);
+#if MIAMIVR_STEAM_FRAME
+	else if(gQuestRenderScalePercent == 125)
+		DrawVrMenuText("125% IS THE NATIVE PANEL, ABOUT 2160 PER EYE",
+			VR_MENU_WIDTH/2, 746, 2, 120, 220, 255);
+	else if(gQuestRenderScalePercent == 100)
+		DrawVrMenuText("100% IS THE RUNTIME DEFAULT, SOFTER THAN THE PANEL",
+			VR_MENU_WIDTH/2, 746, 2, 255, 175, 95);
+#endif
 	else if(gQuestRenderScalePercent > 100)
 		DrawVrMenuText("HIGHER SCALE SHARPENS THE IMAGE BUT INCREASES GPU LOAD",
 			VR_MENU_WIDTH/2, 746, 2, 255, 175, 95);
@@ -4538,8 +4566,16 @@ DrawQuestLocomotionPage(void)
 		"CUTSCENES  < %s >",
 		gCutsceneMode ? "STEREO  R3 CAMERA  L3 KEEP" : "CINEMA SCREEN");
 #endif
+#if MIAMIVR_STEAM_FRAME
+	// The setting is the request; SteamVR's per-app rate can differ, so show
+	// what the compositor is really running too.
+	snprintf(rows[VR_LOCOMOTION_REFRESH_RATE], sizeof(rows[0]),
+		"REFRESH RATE  < %d HZ >  ACTIVE %.0f", gQuestRefreshRateHz,
+		xrvk::getDisplayRefreshRateHz());
+#else
 	snprintf(rows[VR_LOCOMOTION_REFRESH_RATE], sizeof(rows[0]),
 		"REFRESH RATE  < %d HZ >", gQuestRefreshRateHz);
+#endif
 	strcpy(rows[VR_LOCOMOTION_RECENTER], "RECENTER VIEW");
 	strcpy(rows[VR_LOCOMOTION_BACK], "BACK TO SETTINGS");
 #if MIAMIVR_STEAM_FRAME

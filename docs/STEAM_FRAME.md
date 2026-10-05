@@ -187,15 +187,21 @@ pause, options) and as a pointer in the VR menu. Point to highlight, pull the
 trigger to click. On a VR menu row, clicking near the left or right edge steps
 the value down or up. The D-pad and A still work. The beam and dot go to
 SteamVR as the last two layers, so they always sit on top of the menu, the
-cinema screen and the world. Host build only, not worn yet.
+cinema screen and the world. Checked on the Frame unattended (title menu and
+VR menu dumps: the row under the dot highlights, beam and dot on top), not
+worn yet.
 
 Test switches in `vr-diag.ini`: `diag_pointer=frontend|vrmenu` with
 `diag_pointer_u` / `diag_pointer_v` parks a ray on that surface,
 `diag_vr_menu=N` opens VR menu page N, and `dump_frame` also writes
 `vr-pointer.bmp`, a flat composite of the layers in order.
 
-## Known issue (2026-10-05)
+## Steam-in-place data, first boot (2026-10-05)
 
-The Steam-in-place data build has not booted on the Frame yet. Its first
-unattended run never reached a game, and the cause is still being looked at.
-The headset keeps running the previous build until that's fixed.
+The resolver build booted on the Frame unattended into a new game and the
+opening cutscene. Vice City isn't installed from Steam on that headset, so it
+took the fallback and logged `[vr] game data: Documents copy ...`. The Steam
+path itself still needs an install of app 12110 on the Frame to test.
+
+(An earlier "failed" run turned out to be the test script: it ran `deploy.sh`
+without `--tree`, deploy stopped before copying the APK, and the old build ran.)

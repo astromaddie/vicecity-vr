@@ -171,15 +171,21 @@ The Frame controller is a split gamepad. Its bindings:
 
 Standard section 9: 120 Hz at about 2160 x 2160 per eye.
 
-- **Eye size.** The runtime recommends 1728 x 1728 on the Frame. The Frame's
-  default `RenderScalePercent` is 125, so `createSwapchain` makes the eye
-  swapchain 2160 x 2160 and the game's scene (`sceneWidth/Height`) and its
-  post-FX output are that same size. There is no render-larger-then-blit step
-  (the only blits in librw are the reflection copy, divisor 1 by default, and the
-  panel raster copy). Older settings files (100%, 72 Hz from the Quest baseline)
-  are moved once, keyed by `FrameDisplayProfileVersion`. The Quest keeps 100% and
-  72 Hz. The menu's GRAPHICS page shows request, active scale, eye size and
-  `DISPLAY n HZ`.
+- **Eye size.** The target is an absolute 2160 per eye. The Frame's default
+  `RenderScalePercent` is 0, meaning AUTO: `createSwapchain` takes
+  `2160 / recommendedImageRectWidth`, clamped to 100-175% (recommended 1728 gives
+  125%, recommended 2160 gives 100%, as the user's SteamVR per-app
+  `resolutionOverride` moves the recommendation). It logs
+  `[vr] render scale AUTO: recommended WxH, target 2160 per eye, scale P%`, then the
+  existing `per-eye render target` line. The eye swapchain is created at that size
+  and the game's scene (`sceneWidth/Height`) and its post-FX output are the same
+  size. There is no render-larger-then-blit step (the only blits in librw are the
+  reflection copy, divisor 1 by default, and the panel raster copy). Older settings
+  files (100% from the Quest baseline, 125% from the first Frame build, 72 Hz) are
+  moved once, keyed by `FrameDisplayProfileVersion` 2; a percentage chosen in the
+  menu afterwards stays. The Quest keeps 100% and 72 Hz. The menu's GRAPHICS row
+  cycles AUTO / 100 / 125 / 150 / 175 and shows the request, active scale, eye size
+  and `DISPLAY n HZ`.
 - **Refresh request.** `RefreshRate` (default 120, key `refresh_rate` in sfvr's
   settings table, whose default moved from 90 to 120) feeds
   `setPreferredDisplayRefreshRate`. On FOCUSED, `requestPreferredDisplayRefreshRate`
@@ -217,7 +223,7 @@ Host build only, none of it worn.
 | Cinema screen, laser menu navigation, CINEMA 3D depth and the first / third-person swap | **worn**, round 3 (2026-10-05): all good, "I like this a lot" |
 | Laser dot half-hidden at the menu (round 3): dot lies on the surface, beam stops short | host build. **Not worn** |
 | Grips in vehicles are Action (L1), handbrake on A only (round 3) | host build and `check_bindings.py`. **Not worn** |
-| 120 Hz request and fallback, 125% render scale (2160 per eye), menu readouts (round 3) | host build. **Not worn**; needs the per-app 120 Hz set in SteamVR |
+| 120 Hz request and fallback, AUTO render scale (about 2160 per eye), menu readouts (round 3) | host build. **Not worn**; needs the per-app 120 Hz set in SteamVR |
 | Stereo eye dumps at 0, 90 and 180 degrees of yaw | **not run** |
 | Individual controls (View recentre, D-pad, Index fallback), colour correctness, performance numbers | not reported on yet |
 
@@ -226,6 +232,6 @@ Host build only, none of it worn.
 - Run phase 0/1 on the device. This needs the Steam download to finish and an idle headset.
 - Rendering and the game step only after `APP_CMD_RESUME` (`AppState.resumed`). If Lepton never sends it, nothing draws. Check this on the first run.
 - Comfort set, the standard's turn settings, the VR settings page and "Quit to Steam" all follow the Quest port's own menu for now. Map them in a later pass.
-- Wear the display change: set 120 Hz for ViceCityVR in SteamVR's per-app settings, launch from the Steam library, and check `[vr] refresh:`, `per-eye render target: 2160x2160` and `[vr-perf]` (fps, missed) in the log. If 120 Hz does not hold, the fallback steps down and logs it; the measurement then decides whether the default should drop to 90 (standard section 9).
+- Wear the display change: set 120 Hz for ViceCityVR in SteamVR's per-app settings, launch from the Steam library, and check `[vr] refresh:`, `render scale AUTO` and `per-eye render target: 2160x2160` and `[vr-perf]` (fps, missed) in the log. If 120 Hz does not hold, the fallback steps down and logs it; the measurement then decides whether the default should drop to 90 (standard section 9).
 - `XR_META_performance_metrics` is absent on SteamVR, so the in-menu GPU line reads from Vulkan.
 - `SaveProvider` still serves the app-dir saves. On the Frame, saves are in `~/Documents/ViceCityVR/userfiles`, reachable over SSH.

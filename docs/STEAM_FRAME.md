@@ -152,26 +152,39 @@ shot).
 
 ## 3a. Display: 120 Hz, about 2160 per eye
 
-The Frame's panel is about 2160 x 2160 per eye. SteamVR recommends 1728 x 1728
-there, so the Frame build defaults to a **125% render scale**, which makes the
-eye image 2160 x 2160. The eye swapchain is created at that size and the game
-renders straight into it, with no larger render and no blit down. The log shows
-it:
+The Frame's panel is about 2160 x 2160 per eye. What SteamVR recommends depends
+on its per-app resolution override: 1728 x 1728 by default, 2160 x 2160 once the
+player sets the override to 2160 for ViceCityVR. So the Frame default is not a
+fixed percentage but **AUTO**: at session start the scale is 2160 divided by the
+recommended eye width, clamped to 100-175%. The eye swapchain is created at that
+size and the game renders straight into it, with no larger render and no blit
+down.
+
+| SteamVR recommends | AUTO picks | Eye image |
+| --- | --- | --- |
+| 1728 x 1728 (no override) | 125% | 2160 x 2160 |
+| 2160 x 2160 (override 2160) | 100% | 2160 x 2160 |
+
+(A recommendation above 2160 is used as it is at 100%; a very small one is capped at 175%.)
+
+The log shows the whole chain:
 
 ```
-[vr] display defaults moved to 125% render scale and 120 Hz: applied   (once, on an older settings file)
-render scale requested: 125% (recommended 1728x1728, runtime max ...)
+[vr] display defaults moved to AUTO render scale and 120 Hz: applied   (once, on an older settings file)
+[vr] render scale AUTO: recommended 1728x1728, target 2160 per eye, scale 125% (about 2160x2160)
 per-eye render target: 2160x2160 (requested 125%, selected 125%, effective 125.00%, fallback NONE)
 stable native scene=2160x2160 output=2160x2160 temporal=off msaa=1x
 ```
 
-Settings files written by the first Frame builds carry 100% and 72 Hz from the
-Quest baseline; those two values are moved to 125% and 120 Hz once
-(`FrameDisplayProfileVersion` in `vr_settings.ini`). After that the VR menu's
-choices stick: GRAPHICS > OUTPUT REQUEST (100 / 125 / 150 / 175%, restart to
-apply) and LOCOMOTION > REFRESH RATE. Both pages show the real values now:
-GRAPHICS prints the eye size and `DISPLAY n HZ`, LOCOMOTION prints `ACTIVE n`.
-The Quest keeps its 100% and 72 Hz defaults.
+`RenderScalePercent` in `vr_settings.ini` is 0 for AUTO (the default). Settings
+files written by earlier Frame builds carry 100% (the Quest baseline) or 125% (the
+first Frame default) and 72 Hz; they are moved to AUTO, and 120 Hz where the rate
+was still the old one, once (`FrameDisplayProfileVersion` 2). After that the VR
+menu's choices stick: GRAPHICS > OUTPUT cycles AUTO, 100, 125, 150 and 175% (restart
+to apply), and LOCOMOTION > REFRESH RATE. Both pages show the real values now:
+GRAPHICS prints the request (`AUTO 2160` or the percentage), the active scale and
+the eye size, plus `DISPLAY n HZ`; LOCOMOTION prints `ACTIVE n`. The Quest keeps
+its 100% and 72 Hz defaults.
 
 **Refresh rate.** `RefreshRate` (default 120) is a request. At session start the
 game lists the rates `XR_FB_display_refresh_rate` offers and asks for the highest
@@ -252,7 +265,7 @@ their game. Check first, for example with
 | Cinema screen, laser menu navigation, 3D cutscene depth (CINEMA 3D), first / third-person quick swap | **worn**, round 3 (2026-10-05): all good, "I like this a lot" |
 | Laser dot clipped to a half circle with a dither where it meets the menu (round 3) | Fixed on the host (see Menu pointer). **Not worn** |
 | Right grip also the handbrake in vehicles (round 3) | Grips now Action (L1), handbrake on A. Host build and host test. **Not worn** |
-| 120 Hz request with fallback, 125% render scale (2160 per eye), menu shows both (round 3) | Host build. **Not worn.** Needs 120 Hz set once in SteamVR's per-app settings (section 3a) |
+| 120 Hz request with fallback, AUTO render scale (about 2160 per eye: 125% on a 1728 recommendation, 100% on 2160), menu shows both (round 3) | Host build. **Not worn.** Needs 120 Hz set once in SteamVR's per-app settings (section 3a) |
 | Individual controls, colours, performance | not yet reported |
 
 ## Menu pointer

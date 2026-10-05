@@ -1496,28 +1496,45 @@ createSwapchain(void)
 	}
 #if MIAMIVR_STEAM_FRAME
 	// Standard section 9: the Frame renders each eye at about the panel's own
-	// 2160x2160. The runtime recommends 1728x1728 there, so the default is
-	// 125%, and the eye swapchain is created at that size (the scene renders
-	// into it directly; nothing is rendered larger and blitted down). Settings
-	// files written by earlier Frame builds carry 100% and 72 Hz from the Quest
-	// baseline; move them to the Frame's defaults once. Later menu choices
-	// stick.
-	constexpr int kFrameDefaultRenderScale = 125;
+	// 2160x2160. What the runtime recommends depends on SteamVR's per-app
+	// resolution override (1728 by default, 2160 when the player sets 2160), so
+	// the default is not a fixed scale but AUTO: RenderScalePercent 0 means
+	// "scale the recommended size to about 2160 per eye", worked out here at
+	// session start. The eye swapchain is created at that size and the scene
+	// renders straight into it (nothing is rendered larger and blitted down).
+	// A percentage the player picks in the menu is kept as it is. Settings
+	// files from earlier Frame builds carry 100% (Quest baseline) or 125% (the
+	// first Frame default) and 72 Hz; move them to AUTO and 120 Hz once.
 	const int frameDisplayVersion = (int)GetPrivateProfileIntA(
 		"VR", "FrameDisplayProfileVersion", 0, settingsPath);
-	if(frameDisplayVersion < 1){
-		const bool moved =
+	if(frameDisplayVersion < 2){
+		bool moved =
 			WritePrivateProfileStringA("VR", "RenderScalePercent",
-				"125", settingsPath) &&
-			WritePrivateProfileStringA("VR", "RefreshRate",
-				"120", settingsPath) &&
-			WritePrivateProfileStringA("VR", "FrameDisplayProfileVersion",
-				"1", settingsPath);
-		LOGI("[vr] display defaults moved to 125%% render scale and 120 Hz: %s",
+				"0", settingsPath);
+		if(frameDisplayVersion < 1)
+			moved = WritePrivateProfileStringA("VR", "RefreshRate",
+				"120", settingsPath) && moved;
+		moved = WritePrivateProfileStringA("VR", "FrameDisplayProfileVersion",
+			"2", settingsPath) && moved;
+		LOGI("[vr] display defaults moved to AUTO render scale%s: %s",
+		     frameDisplayVersion < 1 ? " and 120 Hz" : "",
 		     moved ? "applied" : "FAILED");
 	}
 	int renderScalePercent = (int)GetPrivateProfileIntA(
-		"VR", "RenderScalePercent", kFrameDefaultRenderScale, settingsPath);
+		"VR", "RenderScalePercent", 0, settingsPath);
+	if(renderScalePercent <= 0){
+		const uint32_t rec = g.viewConfigs[0].recommendedImageRectWidth;
+		const int wanted = rec > 0 ?
+			(int)(((uint64_t)2160*100 + rec/2)/rec) : 100;
+		renderScalePercent = wanted < 100 ? 100 : wanted > 175 ? 175 : wanted;
+		LOGI("[vr] render scale AUTO: recommended %ux%u, target 2160 per eye, "
+		     "scale %d%% (about %ux%u)",
+		     rec, g.viewConfigs[0].recommendedImageRectHeight,
+		     renderScalePercent,
+		     (unsigned)(rec*(uint64_t)renderScalePercent/100),
+		     (unsigned)(g.viewConfigs[0].recommendedImageRectHeight*
+		                (uint64_t)renderScalePercent/100));
+	}
 #else
 	int renderScalePercent = (int)GetPrivateProfileIntA(
 		"VR", "RenderScalePercent", 100, settingsPath);

@@ -1112,17 +1112,24 @@ LoadVrSettings(void)
 			".\\vr_settings.ini") != 0;
 #endif
 	{
-		static const int scales[] = { 100, 125, 150, 175 };
 #if MIAMIVR_STEAM_FRAME
+		// 0 is AUTO: about 2160 per eye whatever size the runtime recommends.
+		static const int scales[] = { 0, 100, 125, 150, 175 };
 		const int savedScale = GetPrivateProfileIntA("VR", "RenderScalePercent",
-			125, ".\\vr_settings.ini");
+			0, ".\\vr_settings.ini");
 #else
+		static const int scales[] = { 100, 125, 150, 175 };
 		const int savedScale = GetPrivateProfileIntA("VR", "RenderScalePercent",
 			100, ".\\vr_settings.ini");
 #endif
 		int best = 0;
 		for(int i = 1; i < (int)ARRAY_SIZE(scales); i++)
+#if MIAMIVR_STEAM_FRAME
+			if(savedScale > 0 && (scales[best] == 0 ||
+			   Abs(scales[i]-savedScale) < Abs(scales[best]-savedScale)))
+#else
 			if(Abs(scales[i]-savedScale) < Abs(scales[best]-savedScale))
+#endif
 				best = i;
 	gQuestRenderScalePercent = scales[best];
 	}
@@ -2664,7 +2671,11 @@ VrDebugUpdate(const PadInput &in)
 		}else if(gVrMenuPage == VR_MENU_PAGE_GRAPHICS &&
 		         (positivePulse || decreasePulse)){
 			if(gVrGraphicsSelection == VR_GRAPHICS_RENDER_SCALE){
+#if MIAMIVR_STEAM_FRAME
+				static const int scales[] = { 0, 100, 125, 150, 175 };
+#else
 				static const int scales[] = { 100, 125, 150, 175 };
+#endif
 				int index = 0;
 				for(int i = 0; i < (int)ARRAY_SIZE(scales); i++)
 					if(scales[i] == gQuestRenderScalePercent)
@@ -3708,6 +3719,23 @@ DrawQuestGraphicsPage(void)
 	xrvk::RenderScaleStatus scaleStatus = {};
 	const bool scaleStatusValid = xrvk::getRenderScaleStatus(&scaleStatus);
 	char rows[VR_GRAPHICS_ITEM_COUNT][112];
+#if MIAMIVR_STEAM_FRAME
+	if(scaleStatusValid){
+		// AUTO aims at about 2160 per eye; show what it came to.
+		char request[24];
+		if(gQuestRenderScalePercent > 0)
+			snprintf(request, sizeof(request), "%d%%", gQuestRenderScalePercent);
+		else
+			strcpy(request, "AUTO 2160");
+		snprintf(rows[VR_GRAPHICS_RENDER_SCALE], sizeof(rows[0]),
+			"OUTPUT < %s >  ACTIVE %.0f%% %u X %u - RESTART", request,
+			scaleStatus.effectivePercent,
+			scaleStatus.actualWidth, scaleStatus.actualHeight);
+	}else
+		snprintf(rows[VR_GRAPHICS_RENDER_SCALE], sizeof(rows[0]),
+			"OUTPUT  < %s - RESTART >", gQuestRenderScalePercent > 0 ?
+				"SET" : "AUTO 2160");
+#else
 	if(scaleStatusValid)
 		snprintf(rows[VR_GRAPHICS_RENDER_SCALE], sizeof(rows[0]),
 			"OUTPUT REQUEST < %d%% >  ACTIVE %.0f%% - RESTART",
@@ -3716,6 +3744,7 @@ DrawQuestGraphicsPage(void)
 		snprintf(rows[VR_GRAPHICS_RENDER_SCALE], sizeof(rows[0]),
 			"OUTPUT REQUEST  < %d%% - RESTART >",
 			gQuestRenderScalePercent);
+#endif
 	snprintf(rows[VR_GRAPHICS_SGSR], sizeof(rows[0]),
 		"TEMPORAL AA < DISABLED - UNSTABLE >");
 	snprintf(rows[VR_GRAPHICS_MSAA], sizeof(rows[0]),
@@ -3853,12 +3882,9 @@ DrawQuestGraphicsPage(void)
 		DrawVrMenuText("150/175% IS EXPERIMENTAL: HIGH GPU AND MEMORY LOAD",
 			VR_MENU_WIDTH/2, 746, 2, 255, 120, 95);
 #if MIAMIVR_STEAM_FRAME
-	else if(gQuestRenderScalePercent == 125)
-		DrawVrMenuText("125% IS THE NATIVE PANEL, ABOUT 2160 PER EYE",
+	else if(gQuestRenderScalePercent == 0)
+		DrawVrMenuText("AUTO: ABOUT 2160 PER EYE, THE PANEL, WHATEVER STEAMVR RECOMMENDS",
 			VR_MENU_WIDTH/2, 746, 2, 120, 220, 255);
-	else if(gQuestRenderScalePercent == 100)
-		DrawVrMenuText("100% IS THE RUNTIME DEFAULT, SOFTER THAN THE PANEL",
-			VR_MENU_WIDTH/2, 746, 2, 255, 175, 95);
 #endif
 	else if(gQuestRenderScalePercent > 100)
 		DrawVrMenuText("HIGHER SCALE SHARPENS THE IMAGE BUT INCREASES GPU LOAD",

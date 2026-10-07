@@ -428,6 +428,9 @@ struct State
 	float menuYaw = 0.0f;
 	XrVector3f menuHeadPos = {};
 #if MIAMIVR_STEAM_FRAME
+	int debugMenuSide = 0;
+#endif
+#if MIAMIVR_STEAM_FRAME
 	// Menu laser pointer: a beam strip and a cursor dot, each its own
 	// alpha-blended quad layer submitted after every other layer, so they
 	// composite over the menu, the cinema screen and the world. One small
@@ -4002,12 +4005,19 @@ getPredictedDisplayTimeNs(void)
 }
 
 void
-setDebugOverlay(const unsigned char *rgba, int width, int height)
+setDebugOverlay(const unsigned char *rgba, int width, int height,
+                int settingsPageSide)
 {
 	const bool validSize =
 		width > 0 && height > 0 &&
 		width <= g.debugWidth && height <= g.debugHeight;
 	const bool wasVisible = g.debugVisible;
+#if MIAMIVR_STEAM_FRAME
+	g.debugMenuSide = settingsPageSide < 0 ? 0 :
+		settingsPageSide > 2 ? 2 : settingsPageSide;
+#else
+	(void)settingsPageSide;
+#endif
 	const bool sameContentSize =
 		width == g.debugContentWidth && height == g.debugContentHeight;
 	g.debugVisible = rgba != nullptr && validSize;
@@ -4441,6 +4451,7 @@ pollEvents(void)
 			// A system recentre: treat it as the View hold.
 			LOGI("[vr] reference space change pending: recentre");
 			g.input.systemRecentre = true;
+			g.menuAnchorValid = false;
 			break;
 		case XR_TYPE_EVENT_DATA_INTERACTION_PROFILE_CHANGED:
 			logCurrentInteractionProfiles();
@@ -4522,6 +4533,20 @@ shouldRender(void)
 	// FOCUSED or deliver the changed event until frames are pumped.
 	return g.running;
 }
+
+#if MIAMIVR_STEAM_FRAME
+bool
+isSessionFocused(void)
+{
+	return g.sessionState == XR_SESSION_STATE_FOCUSED;
+}
+
+void
+resetDebugOverlayAnchor(void)
+{
+	g.menuAnchorValid = false;
+}
+#endif
 
 bool
 hasTrackedGameplayHeadPose(void)
@@ -4849,6 +4874,15 @@ renderFrame(void)
 					debugLayer.pose.position.y = g.menuHeadPos.y;
 					debugLayer.pose.position.z =
 						g.menuHeadPos.z - cosf(g.menuYaw)*1.65f;
+					const float sideSign =
+						g.debugMenuSide == 1 ? -1.0f :
+						g.debugMenuSide == 2 ? 0.0f : 1.0f;
+					const float sideOffset = sideSign*(2.15f*0.5f+
+						1.65f*tanf(0.1745329252f));
+					debugLayer.pose.position.x +=
+						cosf(g.menuYaw)*sideOffset;
+					debugLayer.pose.position.z -=
+						sinf(g.menuYaw)*sideOffset;
 				}else{
 					// The compact overlay keeps following the head, yaw and
 					// pitch only.

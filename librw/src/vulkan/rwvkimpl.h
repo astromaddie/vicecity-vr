@@ -271,6 +271,15 @@ struct Globals
 	bool32 reflectionPrevValid;
 	// Mid-eye pose in play space, updated once per frame by the app layer.
 	float32 headPosition[3];
+	float32 headPoseCorrection[3];
+	float32 headPoseOffset[3];
+	float32 worldScale;
+	float32 headTranslation;
+	float32 heightOffsetMetres;
+	float32 standingHeadHeight;
+	bool32 standingHeadHeightValid;
+	bool32 seatedTracking;
+	bool32 trackingComfortValid;
 	float32 headYaw;
 	float32 headQuat[4];
 	// Active Im2D plane. It lives here rather than in the once-per-frame

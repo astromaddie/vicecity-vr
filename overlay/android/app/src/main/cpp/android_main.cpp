@@ -389,6 +389,7 @@ updateFrameSystemLayer(const xrvk::ControllerInput &controllers)
 		// A theater screen (menus, cutscenes, third person on the screen)
 		// re-places itself in front of where the head now looks.
 		xrvk::resetTheaterAnchor();
+		xrvk::resetDebugOverlayAnchor();
 		const sfvr_haptic_pulse buzz = sfvr_haptic_default(SFVR_HAPTIC_SYSTEM);
 		for(int hand = 0; hand < 2; hand++)
 			xrvk::triggerHaptic(hand, buzz.amplitude, 0.0f,
@@ -433,6 +434,7 @@ renderGameFrame(VkImage image, VkImageView view, const float viewProj[2][16],
 	pad.dpadRight = controllers.dpadRight;
 	pad.leftBumper = controllers.leftBumper;
 	pad.rightBumper = controllers.rightBumper;
+	pad.viewActive = controllers.view;
 	pad.viewBack = updateFrameSystemLayer(controllers);
 	pad.pointerPressed = controllers.pointerPressed;
 	pad.pointerFrontend = controllers.pointerFrontend;
@@ -467,7 +469,12 @@ renderGameFrame(VkImage image, VkImageView view, const float viewProj[2][16],
 		int width = 0, height = 0;
 		const unsigned char *pixels =
 			androidgame::VrDebugPixels(&width, &height);
+#if MIAMIVR_STEAM_FRAME
+		xrvk::setDebugOverlay(pixels, width, height,
+			androidgame::VrSettingsPageSide());
+#else
 		xrvk::setDebugOverlay(pixels, width, height);
+#endif
 	}
 
 	const bool theaterBefore = androidgame::VrShouldUseTheaterMode();

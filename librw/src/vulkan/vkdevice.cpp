@@ -2287,10 +2287,13 @@ beginFrame(VkImage colourImage, VkImageView colourView)
 	// the world simply stops at the far clip, which reads as half-drawn
 	// buildings hanging in clear air from anything with altitude.
 	{
-		const float32 range = gvk.fogEnd-gvk.fogStart;
+		const float32 inverseScale = 1.0f/(gvk.worldScale > 0.0001f ? gvk.worldScale : 1.0f);
+		const float32 fogStart = gvk.fogStart*inverseScale;
+		const float32 fogEnd = gvk.fogEnd*inverseScale;
+		const float32 range = fogEnd-fogStart;
 		const bool32 usable = range > 0.001f;
-		scene->fogParams[0] = gvk.fogStart;
-		scene->fogParams[1] = gvk.fogEnd;
+		scene->fogParams[0] = fogStart;
+		scene->fogParams[1] = fogEnd;
 		scene->fogParams[2] = usable ? 1.0f/range : 0.0f;
 		scene->fogParams[3] = usable ? 1.0f : 0.0f;
 		scene->fogColour[0] = gstate.fogColor.red/255.0f;
@@ -2792,10 +2795,11 @@ updateWorldToPlay(Camera *cam)
 		getFirstPersonPlayBasis(px, py, pz);
 		memcpy(gvk.cameraWorldPos, gvk.fpHeadWorld,
 		       sizeof(gvk.cameraWorldPos));
+		const float32 inverseScale = 1.0f/(gvk.worldScale > 0.0001f ? gvk.worldScale : 1.0f);
 		float32 *m = gvk.worldToPlay;
-		m[0]  = px[0]; m[4] = px[1]; m[8]  = px[2];
-		m[1]  = py[0]; m[5] = py[1]; m[9]  = py[2];
-		m[2]  = pz[0]; m[6] = pz[1]; m[10] = pz[2];
+		m[0]  = px[0]*inverseScale; m[4] = px[1]*inverseScale; m[8]  = px[2]*inverseScale;
+		m[1]  = py[0]*inverseScale; m[5] = py[1]*inverseScale; m[9]  = py[2]*inverseScale;
+		m[2]  = pz[0]*inverseScale; m[6] = pz[1]*inverseScale; m[10] = pz[2]*inverseScale;
 		m[3]  = 0.0f;  m[7] = 0.0f;  m[11] = 0.0f;
 		// The anchor lands on the LATCHED head position; the per-eye poses
 		// carry the live one. Their difference is exactly the physical head
@@ -2804,9 +2808,9 @@ updateWorldToPlay(Camera *cam)
 		// cancelled that out and made the build feel 3DOF.
 		const float32 *w = gvk.fpHeadWorld;
 		const float32 *l = gvk.fpLatchedHeadPos;
-		m[12] = -(px[0]*w[0] + px[1]*w[1] + px[2]*w[2]) + l[0];
-		m[13] = -(py[0]*w[0] + py[1]*w[1] + py[2]*w[2]) + l[1];
-		m[14] = -(pz[0]*w[0] + pz[1]*w[1] + pz[2]*w[2]) + l[2];
+		m[12] = -(px[0]*w[0] + px[1]*w[1] + px[2]*w[2])*inverseScale + l[0];
+		m[13] = -(py[0]*w[0] + py[1]*w[1] + py[2]*w[2])*inverseScale + l[1];
+		m[14] = -(pz[0]*w[0] + pz[1]*w[1] + pz[2]*w[2])*inverseScale + l[2];
 		m[15] = 1.0f;
 		return;
 	}
@@ -2832,8 +2836,7 @@ updateWorldToPlay(Camera *cam)
 	gvk.cameraWorldPos[1] = origin.y;
 	gvk.cameraWorldPos[2] = origin.z;
 
-	// Orthonormal basis, so the inverse is the transpose with the translation
-	// rotated back through it.
+	// Uniformly scaled orthonormal basis; camera-space coordinates are metres.
 	//
 	// The camera point lands on the player's HEAD, not on the play space
 	// origin. The origin is wherever the Guardian was set up: anchoring there
@@ -2843,13 +2846,14 @@ updateWorldToPlay(Camera *cam)
 	// around the player, at the cost of positional head movement -- an
 	// acceptable trade until the full VR layer is ported.
 	float32 *m = gvk.worldToPlay;
-	m[0]  = bx.x; m[4] = bx.y; m[8]  = bx.z;
-	m[1]  = by.x; m[5] = by.y; m[9]  = by.z;
-	m[2]  = bz.x; m[6] = bz.y; m[10] = bz.z;
+	const float32 inverseScale = 1.0f/(gvk.worldScale > 0.0001f ? gvk.worldScale : 1.0f);
+	m[0]  = bx.x*inverseScale; m[4] = bx.y*inverseScale; m[8]  = bx.z*inverseScale;
+	m[1]  = by.x*inverseScale; m[5] = by.y*inverseScale; m[9]  = by.z*inverseScale;
+	m[2]  = bz.x*inverseScale; m[6] = bz.y*inverseScale; m[10] = bz.z*inverseScale;
 	m[3]  = 0.0f; m[7] = 0.0f; m[11] = 0.0f;
-	m[12] = -dot(bx, origin) + gvk.headPosition[0];
-	m[13] = -dot(by, origin) + gvk.headPosition[1];
-	m[14] = -dot(bz, origin) + gvk.headPosition[2];
+	m[12] = -dot(bx, origin)*inverseScale + gvk.headPosition[0];
+	m[13] = -dot(by, origin)*inverseScale + gvk.headPosition[1];
+	m[14] = -dot(bz, origin)*inverseScale + gvk.headPosition[2];
 	m[15] = 1.0f;
 }
 
@@ -2964,6 +2968,7 @@ refreshScenePointLights(void)
 		return;
 	const float32 *m = gvk.worldToPlay;
 	const uint32 count = gvk.pointLightCount;
+	const float32 worldScale = gvk.worldScale > 0.0001f ? gvk.worldScale : 1.0f;
 	for(uint32 i = 0; i < count; i++){
 		const PointLight &light = gvk.pointLights[i];
 		const float32 x = light.position[0];
@@ -2972,7 +2977,7 @@ refreshScenePointLights(void)
 		scene->lightPosRad[i][0] = m[0]*x + m[4]*y + m[8]*z + m[12];
 		scene->lightPosRad[i][1] = m[1]*x + m[5]*y + m[9]*z + m[13];
 		scene->lightPosRad[i][2] = m[2]*x + m[6]*y + m[10]*z + m[14];
-		scene->lightPosRad[i][3] = light.radius;
+		scene->lightPosRad[i][3] = light.radius/(gvk.worldScale > 0.0001f ? gvk.worldScale : 1.0f);
 		scene->lightColour[i][0] = light.colour[0];
 		scene->lightColour[i][1] = light.colour[1];
 		scene->lightColour[i][2] = light.colour[2];
@@ -2980,9 +2985,9 @@ refreshScenePointLights(void)
 		const float32 dx = light.direction[0];
 		const float32 dy = light.direction[1];
 		const float32 dz = light.direction[2];
-		scene->lightDir[i][0] = m[0]*dx + m[4]*dy + m[8]*dz;
-		scene->lightDir[i][1] = m[1]*dx + m[5]*dy + m[9]*dz;
-		scene->lightDir[i][2] = m[2]*dx + m[6]*dy + m[10]*dz;
+		scene->lightDir[i][0] = worldScale*(m[0]*dx + m[4]*dy + m[8]*dz);
+		scene->lightDir[i][1] = worldScale*(m[1]*dx + m[5]*dy + m[9]*dz);
+		scene->lightDir[i][2] = worldScale*(m[2]*dx + m[6]*dy + m[10]*dz);
 		scene->lightDir[i][3] = light.spot ? 1.0f : 0.0f;
 	}
 	scene->lightCount[0] = (float32)count;
@@ -2992,9 +2997,9 @@ refreshScenePointLights(void)
 	const float32 sx = gvk.waterSunDirWorld[0];
 	const float32 sy = gvk.waterSunDirWorld[1];
 	const float32 sz = gvk.waterSunDirWorld[2];
-	scene->waterSun[0] = m[0]*sx + m[4]*sy + m[8]*sz;
-	scene->waterSun[1] = m[1]*sx + m[5]*sy + m[9]*sz;
-	scene->waterSun[2] = m[2]*sx + m[6]*sy + m[10]*sz;
+	scene->waterSun[0] = worldScale*(m[0]*sx + m[4]*sy + m[8]*sz);
+	scene->waterSun[1] = worldScale*(m[1]*sx + m[5]*sy + m[9]*sz);
+	scene->waterSun[2] = worldScale*(m[2]*sx + m[6]*sy + m[10]*sz);
 	uint32 sunPacked =
 		(uint32)(gvk.waterSunColour[0] < 0.0f ? 0.0f :
 		         gvk.waterSunColour[0] > 1.0f ? 255.0f :
@@ -3021,17 +3026,19 @@ refreshSceneReprojection(void)
 		return;
 	SceneData *scene = getSceneData();
 
-	// The fold is rigid (orthonormal basis, possibly mirrored), so the
-	// inverse is the transpose with the translation rotated back through it.
+	// The fold has a uniform scale. Its inverse is the transposed basis
+	// multiplied by worldScale squared: m already includes 1/worldScale.
 	const float32 *m = gvk.worldToPlay;
+	const float32 worldScale = gvk.worldScale > 0.0001f ? gvk.worldScale : 1.0f;
+	const float32 inverseBasisScale = worldScale*worldScale;
 	float32 playToWorld[16];
-	playToWorld[0] = m[0]; playToWorld[4] = m[1]; playToWorld[8]  = m[2];
-	playToWorld[1] = m[4]; playToWorld[5] = m[5]; playToWorld[9]  = m[6];
-	playToWorld[2] = m[8]; playToWorld[6] = m[9]; playToWorld[10] = m[10];
+	playToWorld[0] = m[0]*inverseBasisScale; playToWorld[4] = m[1]*inverseBasisScale; playToWorld[8]  = m[2]*inverseBasisScale;
+	playToWorld[1] = m[4]*inverseBasisScale; playToWorld[5] = m[5]*inverseBasisScale; playToWorld[9]  = m[6]*inverseBasisScale;
+	playToWorld[2] = m[8]*inverseBasisScale; playToWorld[6] = m[9]*inverseBasisScale; playToWorld[10] = m[10]*inverseBasisScale;
 	playToWorld[3] = 0.0f; playToWorld[7] = 0.0f; playToWorld[11] = 0.0f;
-	playToWorld[12] = -(m[0]*m[12] + m[1]*m[13] + m[2]*m[14]);
-	playToWorld[13] = -(m[4]*m[12] + m[5]*m[13] + m[6]*m[14]);
-	playToWorld[14] = -(m[8]*m[12] + m[9]*m[13] + m[10]*m[14]);
+	playToWorld[12] = -inverseBasisScale*(m[0]*m[12] + m[1]*m[13] + m[2]*m[14]);
+	playToWorld[13] = -inverseBasisScale*(m[4]*m[12] + m[5]*m[13] + m[6]*m[14]);
+	playToWorld[14] = -inverseBasisScale*(m[8]*m[12] + m[9]*m[13] + m[10]*m[14]);
 	playToWorld[15] = 1.0f;
 	// The water ripple field reads it to anchor waves in the world.
 	memcpy(scene->playToWorld, playToWorld, sizeof(playToWorld));
@@ -3084,7 +3091,35 @@ setIm2DSpriteTransform(const float32 transform[16])
 void
 setHeadPose(const float32 position[3], float32 yaw, const float32 quat[4])
 {
-	memcpy(gvk.headPosition, position, sizeof(gvk.headPosition));
+	if(gvk.worldScale <= 0.0001f)
+		gvk.worldScale = 1.0f;
+	if(!gvk.trackingComfortValid){
+		gvk.headTranslation = 1.0f;
+		gvk.heightOffsetMetres = 0.0f;
+		gvk.seatedTracking = 0;
+	}
+	float32 calibrated[3] = { position[0], position[1], position[2] };
+	if(!gvk.seatedTracking && !gvk.standingHeadHeightValid){
+		gvk.standingHeadHeight = position[1];
+		gvk.standingHeadHeightValid = 1;
+	}
+	float32 heightShift = gvk.heightOffsetMetres;
+	if(gvk.seatedTracking && gvk.standingHeadHeightValid)
+		heightShift += gvk.standingHeadHeight-position[1];
+	calibrated[1] += heightShift;
+	for(int axis = 0; axis < 3; axis++)
+		gvk.headPoseOffset[axis] = calibrated[axis]-position[axis];
+	if(gvk.firstPersonActive){
+		for(int axis = 0; axis < 3; axis++){
+			const float32 scaled = gvk.fpLatchedHeadPos[axis] +
+				(calibrated[axis]-gvk.fpLatchedHeadPos[axis])*gvk.headTranslation;
+			gvk.headPosition[axis] = scaled;
+			gvk.headPoseCorrection[axis] = scaled-calibrated[axis];
+		}
+	}else{
+		memcpy(gvk.headPosition, calibrated, sizeof(gvk.headPosition));
+		memset(gvk.headPoseCorrection, 0, sizeof(gvk.headPoseCorrection));
+	}
 	gvk.headYaw = yaw;
 	memcpy(gvk.headQuat, quat, sizeof(gvk.headQuat));
 
@@ -3107,6 +3142,25 @@ setHeadPose(const float32 position[3], float32 yaw, const float32 quat[4])
 	if(dx*dx + dy*dy + dz*dz > 9.0f)
 		memcpy(gvk.fpLatchedHeadPos, gvk.headPosition,
 		       sizeof(gvk.fpLatchedHeadPos));
+}
+
+void
+setWorldScale(float32 unitsPerMetre)
+{
+	if(isfinite(unitsPerMetre) && unitsPerMetre >= 0.25f && unitsPerMetre <= 4.0f)
+		gvk.worldScale = unitsPerMetre;
+}
+
+void
+setTrackingComfort(float32 headTranslation, float32 heightOffsetMetres,
+                   bool32 seated)
+{
+	if(isfinite(headTranslation))
+		gvk.headTranslation = fmaxf(0.0f, fminf(headTranslation, 2.0f));
+	if(isfinite(heightOffsetMetres))
+		gvk.heightOffsetMetres = fmaxf(-1.0f, fminf(heightOffsetMetres, 1.0f));
+	gvk.seatedTracking = seated != 0;
+	gvk.trackingComfortValid = 1;
 }
 
 bool32
@@ -3142,8 +3196,8 @@ getFirstPersonViewFrame(float32 rwRight[3], float32 rwUp[3],
 		gvk.headPosition[1] - gvk.fpLatchedHeadPos[1],
 		gvk.headPosition[2] - gvk.fpLatchedHeadPos[2] };
 	for(int i = 0; i < 3; i++)
-		position[i] = gvk.fpHeadWorld[i] +
-			px[i]*relative[0] + py[i]*relative[1] + pz[i]*relative[2];
+		position[i] = gvk.fpHeadWorld[i] + gvk.worldScale*
+			(px[i]*relative[0] + py[i]*relative[1] + pz[i]*relative[2]);
 	return 1;
 }
 
@@ -3155,7 +3209,10 @@ setFirstPersonEyePoses(const float32 positions[2][3],
 		gvk.eyePosesValid = 0;
 		return;
 	}
-	memcpy(gvk.eyePosition, positions, sizeof(gvk.eyePosition));
+	for(int eye = 0; eye < 2; eye++)
+		for(int axis = 0; axis < 3; axis++)
+			gvk.eyePosition[eye][axis] = positions[eye][axis] +
+				gvk.headPoseCorrection[axis];
 	memcpy(gvk.eyeQuat, orientations, sizeof(gvk.eyeQuat));
 	gvk.eyePosesValid = 1;
 }
@@ -3209,9 +3266,10 @@ playPoseToFirstPersonWorld(const float32 playPosition[3],
 	// hands and weapons along with every lean, leaving them where the
 	// rendered world no longer is.
 	const float32 relative[3] = {
-		playPosition[0] - gvk.fpLatchedHeadPos[0],
-		playPosition[1] - gvk.fpLatchedHeadPos[1],
-		playPosition[2] - gvk.fpLatchedHeadPos[2] };
+		playPosition[0] + gvk.headPoseOffset[0] - gvk.fpLatchedHeadPos[0],
+		playPosition[1] + gvk.headPoseOffset[1] - gvk.fpLatchedHeadPos[1],
+		playPosition[2] + gvk.headPoseOffset[2] - gvk.fpLatchedHeadPos[2] };
+	const float32 worldScale = gvk.worldScale > 0.0001f ? gvk.worldScale : 1.0f;
 
 	for(int i = 0; i < 3; i++){
 		worldRight[i] =
@@ -3220,8 +3278,8 @@ playPoseToFirstPersonWorld(const float32 playPosition[3],
 			px[i]*pu[0] + py[i]*pu[1] + pz[i]*pu[2];
 		worldForward[i] =
 			px[i]*pf[0] + py[i]*pf[1] + pz[i]*pf[2];
-		worldPosition[i] = gvk.fpHeadWorld[i] +
-			px[i]*relative[0] + py[i]*relative[1] + pz[i]*relative[2];
+		worldPosition[i] = gvk.fpHeadWorld[i] + worldScale*
+			(px[i]*relative[0] + py[i]*relative[1] + pz[i]*relative[2]);
 	}
 	return 1;
 }
@@ -3255,12 +3313,13 @@ firstPersonWorldPositionToPlay(const float32 worldPosition[3],
 		worldPosition[0] - gvk.fpHeadWorld[0],
 		worldPosition[1] - gvk.fpHeadWorld[1],
 		worldPosition[2] - gvk.fpHeadWorld[2] };
-	playPosition[0] = gvk.fpLatchedHeadPos[0] +
-		relative[0]*px[0]+relative[1]*px[1]+relative[2]*px[2];
-	playPosition[1] = gvk.fpLatchedHeadPos[1] +
-		relative[0]*py[0]+relative[1]*py[1]+relative[2]*py[2];
-	playPosition[2] = gvk.fpLatchedHeadPos[2] +
-		relative[0]*pz[0]+relative[1]*pz[1]+relative[2]*pz[2];
+	const float32 inverseScale = 1.0f/(gvk.worldScale > 0.0001f ? gvk.worldScale : 1.0f);
+	playPosition[0] = gvk.fpLatchedHeadPos[0] - gvk.headPoseOffset[0] + inverseScale*
+		(relative[0]*px[0]+relative[1]*px[1]+relative[2]*px[2]);
+	playPosition[1] = gvk.fpLatchedHeadPos[1] - gvk.headPoseOffset[1] + inverseScale*
+		(relative[0]*py[0]+relative[1]*py[1]+relative[2]*py[2]);
+	playPosition[2] = gvk.fpLatchedHeadPos[2] - gvk.headPoseOffset[2] + inverseScale*
+		(relative[0]*pz[0]+relative[1]*pz[1]+relative[2]*pz[2]);
 	return 1;
 }
 
@@ -3315,8 +3374,9 @@ isFirstPersonWorldSphereVisibleInStereo(const float32 worldCentre[3],
 		return 1;
 	const float32 clampedMarginTangent =
 		fmaxf(0.0f, fminf(angularMarginTangent, 0.17632698f));
-	const float32 safeRadius = fmaxf(0.0f, radius) + 0.25f +
-		distance*clampedMarginTangent;
+	const float32 inverseScale = 1.0f/(gvk.worldScale > 0.0001f ? gvk.worldScale : 1.0f);
+	const float32 safeRadius = fmaxf(0.0f, radius)*inverseScale + 0.25f +
+		distance*inverseScale*clampedMarginTangent;
 
 	return sphereIntersectsClipSidePlanes(
 		gvk.stereoCullPlanes[0], playCentre, safeRadius) ||
@@ -3353,8 +3413,9 @@ isFirstPersonWorldBoxVisibleInStereo(const float32 worldCorners[8][3],
 			return 1;
 		farthestDistance = fmaxf(farthestDistance, distance);
 	}
+	const float32 inverseScale = 1.0f/(gvk.worldScale > 0.0001f ? gvk.worldScale : 1.0f);
 	const float32 safeMargin = 0.25f+
-		farthestDistance*clampedMarginTangent;
+		farthestDistance*inverseScale*clampedMarginTangent;
 	for(int32 eye = 0; eye < 2; eye++){
 		bool32 eyeVisible = 1;
 		for(int32 planeIndex = 0; planeIndex < 5; planeIndex++){

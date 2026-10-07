@@ -73,6 +73,7 @@ struct PadInput
 	// person; unbound in first person).
 	bool leftBumper, rightBumper;
 	bool viewBack;
+	bool viewActive;
 	// Menu laser pointer (xr_vulkan_session.h): the right trigger as a click
 	// (hysteresis 0.6 / 0.45), and where the right aim ray lands, 0..1 across
 	// the theater screen (frontend) or the VR menu panel, v from the top.
@@ -117,6 +118,9 @@ enum eVrPadSource
 	VR_PAD_SOURCE_RIGHT_GRIP,
 	VR_PAD_SOURCE_LEFT_STICK_CLICK,
 	VR_PAD_SOURCE_RIGHT_STICK_CLICK,
+#if MIAMIVR_STEAM_FRAME
+	VR_PAD_SOURCE_DPAD_UP,
+#endif
 	VR_PAD_SOURCE_COUNT
 };
 
@@ -230,6 +234,15 @@ bool VrThirdPersonFaceMove(void);
 void VrToggleThirdPerson(void);
 // Mode 1 and gameplay is running: the stock camera is on the theater screen.
 bool VrScreenGameplayActive(void);
+// Live camera/world-size modifier values are shared with the OpenXR input
+// layer. Writes do not touch disk; the input layer saves once on release.
+void VrGetCameraScaleAdjustments(float *worldScale, float *cameraCloser,
+	float *cameraLower);
+void VrSetCameraScaleAdjustments(float worldScale, float cameraCloser,
+	float cameraLower);
+void VrSaveCameraScaleAdjustments(void);
+// 0 right, 1 left, 2 centre. The panel and pointer share one pose.
+int VrSettingsPageSide(void);
 #endif
 // Which camera a stereo cutscene is watched from: 0 the director's own,
 // 1 and up the staged actors. The player cycles it with R3.

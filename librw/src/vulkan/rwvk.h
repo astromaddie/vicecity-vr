@@ -305,6 +305,11 @@ bool32 getImmediate2DStrictDepth(void);
 // of around the Guardian origin.
 void setHeadPose(const float32 position[3], float32 yaw,
                  const float32 quat[4]);
+// Uniform world-size adapter and centre-head comfort controls. Tracking stays
+// in metres; game-world positions use the configured units-per-metre value.
+void setWorldScale(float32 unitsPerMetre);
+void setTrackingComfort(float32 headTranslation, float32 heightOffsetMetres,
+                        bool32 seated);
 
 // The current first person VIEW expressed in game world axes: where the
 // player is actually looking, head orientation composed onto the anchor.

@@ -45,6 +45,10 @@
 #include "frame_diag.h"
 #endif
 #include "vulkan/rwvk.h"
+#if MIAMIVR_STEAM_FRAME
+#include "sfvr/sfvr_adjust.h"
+#include "sfvr/sfvr_camera.h"
+#endif
 #ifdef GTA_VR_WEAPONS
 #include "OculusVR.h"
 #endif
@@ -355,6 +359,13 @@ _psGetUserFilesFolder(void)
 }
 
 static androidgame::PadInput gPadInput;
+#if MIAMIVR_STEAM_FRAME
+static sfvr_adjust_state gCameraScaleAdjustState;
+static sfvr_adjust_config gCameraScaleAdjustConfig;
+static bool gCameraScaleAdjustInitialized;
+static bool gCameraScaleAdjustWasActive;
+static bool gCameraScaleAdjustDirty;
+#endif
 
 // Read by psTimer; written once per frame from the XR layer.
 long long gVrFrameTimeNs;
@@ -405,6 +416,8 @@ static int
 VrVehiclePadTarget(int source, int padMode)
 {
 #if MIAMIVR_STEAM_FRAME
+	if(source == VR_PAD_SOURCE_DPAD_UP)
+		return VR_PAD_TARGET_NONE;
 	if(source == VR_PAD_SOURCE_LEFT_GRIP || source == VR_PAD_SOURCE_RIGHT_GRIP)
 		return (padMode == 0 || padMode == 1) ?
 			VR_PAD_TARGET_L1 : VR_PAD_TARGET_NONE;
@@ -438,6 +451,9 @@ VrApplyPadBindings(CControllerState *state, const PadInput &input,
 		(int16)(clamp(input.rightGrip, 0.0f, 1.0f)*255.0f),
 		(int16)(input.leftStickClick  ? 255 : 0),
 		(int16)(input.rightStickClick ? 255 : 0)
+#if MIAMIVR_STEAM_FRAME
+		,(int16)(input.dpadUp ? 255 : 0)
+#endif
 	};
 
 	// Remapping is an on-foot feature; see the enum in android.h for why a
@@ -1214,6 +1230,32 @@ VrUpdateFirstPersonAnchor(bool postPhysics)
 			forward = gVrChaseHoldForward;
 		}
 #endif
+#if MIAMIVR_STEAM_FRAME
+		// Preserve the game's chase camera and move only the rendered on-foot
+		// camera. Its own LOS query still constrains the final eye position.
+		if(thirdPersonOnFoot){
+			float worldScale, cameraCloser, cameraLower;
+			androidgame::VrGetCameraScaleAdjustments(
+				&worldScale, &cameraCloser, &cameraLower);
+			(void)worldScale;
+			if(cameraCloser != 0.0f || cameraLower != 0.0f){
+				const CVector target = player->GetPosition();
+				const float sourcePlay[3] = { head.x, head.z, head.y };
+				const float targetPlay[3] = { target.x, target.z, target.y };
+				float adjustedPlay[3];
+				sfvr_camera_origin(sourcePlay, targetPlay,
+					cameraCloser, cameraLower, adjustedPlay);
+				CVector adjusted(adjustedPlay[0], adjustedPlay[2],
+					adjustedPlay[1]);
+				CColPoint collision;
+				CEntity *hit = nil;
+				if(CWorld::ProcessLineOfSight(target, adjusted, collision,
+				   hit, true, false, false, true, false, true, true))
+					adjusted = collision.point;
+				head = adjusted;
+			}
+		}
+#endif
 #ifdef GTA_VR_WEAPONS
 		if(gVrInVehicle){
 			// The desktop vehicle view applies both the global vertical seat
@@ -1512,6 +1554,77 @@ DiagStartNewGame(void)
 }
 #endif
 
+#if MIAMIVR_STEAM_FRAME
+static void
+UpdateCameraScaleModifier(androidgame::PadInput *input)
+{
+	if(!input)
+		return;
+	if(!gCameraScaleAdjustInitialized){
+		sfvr_adjust_config_default(&gCameraScaleAdjustConfig);
+		gCameraScaleAdjustConfig.world_scale_min = 0.25f;
+		gCameraScaleAdjustConfig.world_scale_max = 4.0f;
+		sfvr_adjust_init(&gCameraScaleAdjustState);
+		gCameraScaleAdjustInitialized = true;
+	}
+	const bool remoteMode =
+		CWorld::Players[CWorld::PlayerInFocus].IsPlayerInRemoteMode();
+#ifdef GTA_VR_WEAPONS
+	const bool trackedScopeActive = OculusVR::IsTrackedScopeActive();
+#else
+	const bool trackedScopeActive = false;
+#endif
+	const bool onFoot = gGameState == GS_PLAYING_GAME &&
+		!FrontEndMenuManager.m_bGameNotLoaded &&
+		!FrontEndMenuManager.m_bMenuActive &&
+		!FrontEndMenuManager.m_bWantToRestart &&
+		!FrontEndMenuManager.m_bWantToLoad &&
+		!CGame::playingIntro && !FindPlayerVehicle() && !remoteMode &&
+		!CCutsceneMgr::IsRunning() &&
+		!CCutsceneMgr::IsCutsceneProcessing() && !trackedScopeActive &&
+		!TheCamera.m_WideScreenOn;
+	const bool settingsPreview = androidgame::VrMenuConsumesInput() &&
+		!androidgame::VrThirdPersonScreen();
+	const bool thirdPerson = androidgame::VrThirdPersonShoulder();
+	const bool gripAvailable = androidgame::VrPadBinding(
+		androidgame::VR_PAD_SOURCE_LEFT_GRIP) == androidgame::VR_PAD_TARGET_NONE;
+	const bool eligible = xrvk::isSessionFocused() && onFoot &&
+		((thirdPerson && gripAvailable) || settingsPreview);
+	const bool modifier = eligible && input->leftGrip >= 0.65f;
+	if(!xrvk::isSessionFocused()){
+		sfvr_adjust_focus_lost(&gCameraScaleAdjustState);
+		if(gCameraScaleAdjustDirty){
+			androidgame::VrSaveCameraScaleAdjustments();
+			gCameraScaleAdjustDirty = false;
+		}
+	}
+	float worldScale, cameraCloser, cameraLower;
+	androidgame::VrGetCameraScaleAdjustments(
+		&worldScale, &cameraCloser, &cameraLower);
+	float right[2] = { input->rightStickX, input->rightStickY };
+	const double displaySeconds =
+		(double)xrvk::getPredictedDisplayTimeNs()*1.0e-9;
+	if(sfvr_adjust_update(&gCameraScaleAdjustState,
+	   &gCameraScaleAdjustConfig, right,
+	   input->leftGrip >= 0.65f, eligible, input->menu,
+	   input->viewActive || input->viewBack, displaySeconds,
+	   &worldScale, thirdPerson ? &cameraCloser : nil,
+	   thirdPerson ? &cameraLower : nil)){
+		androidgame::VrSetCameraScaleAdjustments(
+			worldScale, cameraCloser, cameraLower);
+		gCameraScaleAdjustDirty = true;
+	}
+	input->rightStickX = right[0];
+	input->rightStickY = right[1];
+	if(gCameraScaleAdjustWasActive && !modifier){
+		if(gCameraScaleAdjustDirty)
+			androidgame::VrSaveCameraScaleAdjustments();
+		gCameraScaleAdjustDirty = false;
+	}
+	gCameraScaleAdjustWasActive = modifier;
+}
+#endif
+
 void
 CapturePad(RwInt32 padID)
 {
@@ -1527,6 +1640,9 @@ CapturePad(RwInt32 padID)
 	state.Clear();
 
 	const androidgame::PadInput &in = gPadInput;
+#if MIAMIVR_STEAM_FRAME
+	UpdateCameraScaleModifier(&gPadInput);
+#endif
 	if(androidgame::VrMenuConsumesInput())
 		return;
 
@@ -1655,6 +1771,11 @@ CapturePad(RwInt32 padID)
 	if(remoteMode)
 		bound.a = false;
 #if MIAMIVR_STEAM_FRAME
+	// The on-foot Frame D-pad up is routed through the binding table to L1.
+	// Other modes retain the game's direct D-pad because vehicles and the
+	// frontend have their own native controls.
+	if(!onFootGameplay)
+		bound.dpadUp = false;
 	// With the ray on the frontend the trigger is the mouse's left button (see
 	// VrFrontendPointer); it must not also be Cross, which would confirm the
 	// highlighted item a second time.
@@ -1740,7 +1861,7 @@ CapturePad(RwInt32 padID)
 	// frontend and in play, alongside the stick-built one above.
 	if(in.dpadLeft)  state.DPadLeft  = 255;
 	if(in.dpadRight) state.DPadRight = 255;
-	if(in.dpadUp)    state.DPadUp    = 255;
+	if(in.dpadUp && !onFootGameplay) state.DPadUp = 255;
 	if(in.dpadDown)  state.DPadDown  = 255;
 #endif
 }

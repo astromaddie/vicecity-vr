@@ -270,7 +270,7 @@ endif()
 # vendored unedited in third_party/sfvr.
 if(MIAMIVR_STEAM_FRAME)
 	set(SFVR_DIR "${REVC_ROOT}/third_party/sfvr")
-	file(GLOB SFVR_SOURCES "${SFVR_DIR}/src/*.c")
+	file(GLOB SFVR_SOURCES CONFIGURE_DEPENDS "${SFVR_DIR}/src/*.c")
 	add_library(sfvr STATIC ${SFVR_SOURCES})
 	target_include_directories(sfvr PUBLIC "${SFVR_DIR}/include")
 	set_target_properties(sfvr PROPERTIES C_STANDARD 99)

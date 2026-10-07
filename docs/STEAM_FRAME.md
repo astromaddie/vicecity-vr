@@ -306,3 +306,42 @@ path itself still needs an install of app 12110 on the Frame to test.
 
 (An earlier "failed" run turned out to be the test script: it ran `deploy.sh`
 without `--tree`, deploy stopped before copying the APK, and the old build ran.)
+
+## Camera migration delivery (2026-10-07)
+
+Source `4fd059d78f9b989ba363498cd3ee00cdefa0ad74` passed focused production camera-transform/modifier checks,
+the native ARM64 build, package/dependency checks and Android v2 signature verification.
+
+The shared camera adapter provides snap/smooth/off choices, signed native-collision
+camera offsets, apparent world size, height, seated calibration, head movement,
+the live frozen-gameplay settings preview and right/left/centre panel placement.
+Physical left grip plus physical right stick adjusts size horizontally and
+farther/higher or nearer/lower vertically, before turn/game readers; release or
+focus loss requires a neutral stick. Occupied first-person grips and custom
+bindings retain their game action. Fresh defaults are snap 30, with a persistent
+personal smooth-120/third-person profile; explicit saved choices are preserved.
+Third-person pickup is on D-pad Up, freeing left grip. First-person pickup and
+existing vehicle controls remain available.
+
+Installed `~/devkit-game/ViceCityVR/ViceCity-VR.apk` SHA-256:
+`ebee41a762deae304d8f41d0d8b4121ac03c1270c890d9f9e05059d8f1e7e9e3`. The booked, idle Steam-title launch (raw app ID 3436746357) booted the
+frontend through SteamVR/OpenXR, accepted Frame/Index/Touch profile suggestions
+(26/18/19 bindings), and reached READY/SYNCHRONIZED. Only the task's own Lepton
+process was stopped. No new gameplay-preview capture or physical input test was
+performed in this smoke check.
+
+The APK records committed kit `4fd059d7` and actual assembled tree
+`09e446dd` plus dirty overlays; the compiled adapter and renderer sources match
+the kit. This is not labelled as a clean assembled-tree build. The settings file
+remained exact. Startup truncated the existing transition log; its original
+bytes, hash and mode 600 were restored after retaining the new log separately.
+
+| Current increment | Evidence level |
+| --- | --- |
+| ARM64 package, Steam-title frontend boot and accepted profile suggestions | verified unattended |
+| New live camera preview, physical modifier/remaps, tracked recentring and comfort | not worn; preview not captured |
+
+Wear checks: grip plus all four right-stick directions; neutral release;
+pause/settings/resume; right-side panel and pointer; recentre; on-foot pickup;
+first-person actions and vehicle entry/driving/exit. Evidence: task output
+`device-camera-migration/ViceCityVR/lepton-steamlaunch.log` and the cross-port report.

@@ -2,7 +2,9 @@
 
 This is my Steam Frame fork of [Vice City VR for Quest](https://github.com/dubrovskiy-yevhen-stakelogic/vice-city-vr-quest), based on [reVC](https://github.com/mrxenginner/reVC). It runs on the headset itself through Lepton, using OpenXR and Vulkan. No gaming PC needed to play.
 
-**EXPERIMENTAL.** I made this for personal use, and it's still a work in progress. You need the original PC game's data from your own copy of GTA Vice City. This is a source build kit; no APK or original game data is included.
+**EXPERIMENTAL.** I made this for personal use, and it's still a work in progress. You need the original PC game's data from your own copy of GTA Vice City. This repository includes the source build kit; the prebuilt package is linked below.
+
+**Want to play on Steam Frame?** Download the prebuilt standalone package from the [v0.1.0 prerelease](https://github.com/astromaddie/vicecity-vr/releases/tag/v0.1.0). No compiler is needed. You still need data from your own PC copy of Grand Theft Auto: Vice City; it is not included.
 
 I've played it on my Frame. The cinema screen, laser menus, 3D cutscenes and quick first/third-person switching are working.
 

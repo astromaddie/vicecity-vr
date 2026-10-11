@@ -4,7 +4,7 @@ This is my Steam Frame fork of [Vice City VR for Quest](https://github.com/dubro
 
 **EXPERIMENTAL.** I made this for personal use, and it's still a work in progress. You need the original PC game's data from your own copy of GTA Vice City. This repository includes the source build kit; the prebuilt package is linked below.
 
-**Want to play on Steam Frame?** Download the prebuilt standalone package from the [v0.1.0 prerelease](https://github.com/astromaddie/vicecity-vr/releases/tag/v0.1.0). No compiler is needed. You still need data from your own PC copy of Grand Theft Auto: Vice City; it is not included.
+**Want to play on Steam Frame?** Download the prebuilt standalone package from the [v0.2.1 prerelease](https://github.com/astromaddie/vicecity-vr/releases/tag/v0.2.1). No compiler is needed. You still need data from your own PC copy of Grand Theft Auto: Vice City; it is not included.
 
 I've played it on my Frame. The cinema screen, laser menus, 3D cutscenes and quick first/third-person switching are working.
 
@@ -15,6 +15,7 @@ I've played it on my Frame. The cinema screen, laser menus, 3D cutscenes and qui
 - First-person play, with two third-person options: the whole game on a 3D cinema screen, or an over-the-shoulder view with head tracking and a level horizon.
 - A quick first/third-person toggle on View. It returns to whichever third-person style you last selected.
 - 3D cinema cutscenes with subtle, normal and deep settings. You can also choose a flat cinema screen or an immersive stereo view inside the shot.
+- Hold A for half a second to skip supported cutscenes. A white ring fills clockwise beside “Hold to skip”; a tap keeps the scene playing.
 - Live camera previews in the settings menu. Adjust world size, camera distance and height while seeing the effect on the paused game, with the settings panel beside the view.
 - Quick camera adjustment with left grip + right stick: left/right changes apparent world size; up/down changes camera distance and height. The stick returns to gameplay after you release the grip and bring it back to centre.
 - Snap, smooth or no stick turning, movement direction options, seated calibration and head-movement settings.
@@ -47,6 +48,7 @@ The [architecture notes](docs/VR_ARCHITECTURE.md) explain the Frame changes. The
 | Input | Action |
 | --- | --- |
 | Right Menu | Pause |
+| A during a skippable cutscene, held half a second | Skip the cutscene |
 | Both grips + Menu | Open or close VR settings |
 | Left View, short press | Switch first/third person during play; Back in menus |
 | Left View, held 1 second | Recentre |

@@ -92,8 +92,9 @@ android {
 		// and minSdk cannot vary per build type, so Frame invocations lower it.
 		minSdk = if (steamFrameBuildRequested) 30 else 32
 		targetSdk = 35
-		versionCode = 522
-		versionName = "0.5.6"
+		// Frame release numbering is separate from the upstream Quest version.
+		versionCode = if (steamFrameBuildRequested) 523 else 522
+		versionName = if (steamFrameBuildRequested) "0.2.1" else "0.5.6"
 
 		ndk {
 			abiFilters += "arm64-v8a"

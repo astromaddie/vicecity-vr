@@ -79,3 +79,8 @@
 Host regressions cover production physics, contacts, menus, state transitions
 and real locally supplied vehicle meshes. Clean assembly and APK compilation
 are separate checks from headset appearance and frame-time validation.
+
+## 2026-10-11 — Public source confirmation
+
+- Made the experimental source repository public after the clean build and hygiene checks.
+- Kept game data and personal build artifacts separate; no binary release was uploaded.

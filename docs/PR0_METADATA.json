@@ -2,7 +2,7 @@
   "schema_version": 1,
   "milestone": "PR0",
   "status": "EXPERIMENTAL",
-  "publication_status": "ready for experimental public source; no binary release",
+  "publication_status": "public experimental source; no binary release",
   "tested_commit": "6c144d744dabf52547603823ca5efdafa5793013",
   "supported_targets": [
     "Steam Frame Lepton / Android ARM64 / SteamVR OpenXR",
@@ -35,8 +35,8 @@
         "kit_commit": "6c144d744dabf52547603823ca5efdafa5793013",
         "revc_commit": "026cd10f3fdbd92c089830e5067c4457c53c1b51",
         "assembled_tree_commit": "6846a7abc4494dcb4ebbfdab27a8e91b86cf9be3",
-        "assembled_tree_sha256": "a6199bd3a46f08f9108e286692a3a04fc1162d61",
-        "assembled_tree_tracked_diff": "clean"
+        "assembled_tree_tracked_diff": "clean",
+        "assembled_git_tree": "a6199bd3a46f08f9108e286692a3a04fc1162d61"
       },
       "apk": {
         "sha256": "32a3dec10f6c8777ae908581e8a95e26980805c085257c97dffcb5c63611bd7e",

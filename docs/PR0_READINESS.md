@@ -1,6 +1,6 @@
 # PR0 source readiness
 
-**EXPERIMENTAL — ready for public source.** No binary release is included.
+**EXPERIMENTAL — public source.** No binary release is included.
 
 - **Checked source commit:** `6c144d744dabf52547603823ca5efdafa5793013`.
 - **Targets:** Steam Frame Lepton/Android ARM64 and the inherited Quest target. This PR0 record covers the Frame build route.
@@ -23,7 +23,7 @@ The deploy guard was also exercised with `FRAME_HOST` unset. It stopped before a
 
 ## Build and artifact
 
-The complete Frame APK build passed once from the clean checkout. The assembled tree has commit `6846a7abc4494dcb4ebbfdab27a8e91b86cf9be3`, tree SHA-256 `a6199bd3a46f08f9108e286692a3a04fc1162d61`, and no tracked changes. The final local APK is SHA-256 `32a3dec10f6c8777ae908581e8a95e26980805c085257c97dffcb5c63611bd7e` (3,176,920 bytes), package `com.miamivr.quest.frame`, version `0.5.6-frame` (522).
+The complete Frame APK build passed once from the clean checkout. The assembled tree has commit `6846a7abc4494dcb4ebbfdab27a8e91b86cf9be3`, Git tree `a6199bd3a46f08f9108e286692a3a04fc1162d61`, and no tracked changes. The final local APK is SHA-256 `32a3dec10f6c8777ae908581e8a95e26980805c085257c97dffcb5c63611bd7e` (3,176,920 bytes), package `com.miamivr.quest.frame`, version `0.5.6-frame` (522).
 
 `apksigner` verified APK Signature Scheme v2 with a temporary Android Debug key whose certificate SHA-256 is `1ae9f15b801a1b66822f6d8a00da22863f66fab05f2beddb874efed12f4f6d71`. The JVM user home, shell HOME and Gradle home were separate disposable directories; the Gradle home started empty, and the APK signer matches the key generated in the temporary JVM home. `zipalign -c -P 16 4` and the ZIP integrity check passed. The APK contains only ARM64 native libraries and has no ROM or game-data-like entries.
 

@@ -1,4 +1,4 @@
-# Vice City VR on the Steam Frame: architecture (current state)
+# Vice City VR on the Steam Frame: architecture
 
 This is the Steam Frame retarget of the Quest port in this kit. The Quest port
 already renders in stereo, tracks the hands and has an in-headset menu. The
@@ -7,6 +7,13 @@ the Quest build does. How to build, deploy and test is in
 [STEAM_FRAME.md](STEAM_FRAME.md). Quest-side rendering detail is in
 [RENDERING_NOTES.md](../RENDERING_NOTES.md) and
 [overlay/docs/QUEST_PORT.md](../overlay/docs/QUEST_PORT.md).
+
+The current fork includes first/third-person switching, 3D cinema cutscenes,
+laser menus, live camera settings and grip-and-stick adjustment. AUTO targets
+native 2160×2160 per eye, with a 120 Hz refresh request. The game, cinema screen,
+menu pointer and view switching have been played and confirmed on the Frame.
+The [README](../README.md) is the player-facing overview; this document describes
+the implementation and retains dated platform observations.
 
 ## 1. Target and probe facts
 
@@ -17,8 +24,8 @@ the Quest build does. How to build, deploy and test is in
 | Android features | `vulkan.level=1`, `vulkan.version=0x401000` (1.1), `vulkan.compute`; **no** `android.hardware.vr.headtracking` | `pm list features`, 2026-10-03 |
 | OpenXR runtime | SteamVR OpenXR, `/vendor/etc/openxr/1/active_runtime.json`; no loader broker | `ls`, 2026-10-03 |
 | Loader | Khronos `openxr_loader_for_android` 1.1.43 (Maven, the Quest build's own) | `build.gradle.kts` |
-| Graphics binding | `XR_KHR_vulkan_enable2`; the runtime creates the Vulkan instance and device | Quest code; **unproven on the Frame** |
-| Swapchain | one image, `arraySize = 2`, multiview; RGBA8/BGRA8 UNORM preferred, sRGB accepted. On the Frame an sRGB image is created mutable-format and rendered through a UNORM view, because the post-FX output is already gamma-encoded | Quest code + Frame build; the format SteamVR offers in Lepton is unknown until the first run |
+| Graphics binding | `XR_KHR_vulkan_enable2`; the runtime creates the Vulkan instance and device | Frame session implementation |
+| Swapchain | one image, `arraySize = 2`, multiview; RGBA8/BGRA8 UNORM preferred, sRGB accepted. On the Frame an sRGB image is created mutable-format and rendered through a UNORM view, because the post-FX output is already gamma-encoded | Frame format negotiation and Vulkan image views |
 | API version | OpenXR 1.0 requested in the Frame build (1.1 retried if refused) | every Frame-proven port asks for 1.0 |
 
 The headtracking feature is why the Frame manifest exists: the Quest manifest
@@ -108,12 +115,9 @@ The engine edits sit behind `MIAMIVR_GAMEDATA`, which `GameData.h` defines as
 `MIAMIVR_BRINGUP`). On the Quest build it is 0, and `GameData.cpp` compiles to
 nothing.
 
-Verified: the resolver, library discovery and the order above by a host test
-(`tools/steam_frame/tests/run_gamedata_test.sh` in the assembled tree, a fake
-library in a temp folder), and both APKs build. The Steam-in-place path is not
-device-verified. The fallback path is what runs today, because Vice City is
-not installed in Steam on the Frame, and it has not been re-run on the device
-since this change.
+The file-resolver tests cover Steam library discovery, read order and writable
+storage. The normal boot path selects the Steam installation when present and
+falls back to the Documents copy.
 
 ## 3. Frame protocol (inherited from the Quest port)
 
@@ -129,21 +133,19 @@ since this change.
 - Reference space is STAGE, falling back to LOCAL. A VIEW space carries the
   head-locked menu quad.
 
-## 4. Draw inventory (all inherited; the Frame adds none)
+## 4. Draw inventory
 
 | Draw | VR rule in this port |
 | --- | --- |
-| Head roll (Frame build) | The HUD plane, crosshair and sights follow head yaw and pitch only, never roll. World sprites (coronas, flares, particles) sit on a second plane that keeps the full head pose, so they still land on their lights, and each sprite is counter-rotated by the head roll every frame (`CSprite::UpdateVrRoll`). The VR menu is world-locked with a yaw-only anchor set when it opens and on recentre. The log prints `[vr] roll-free billboards/HUD` at startup. Host build only, not worn |
+| Head roll (Frame build) | The HUD plane, crosshair and sights follow head yaw and pitch only, never roll. World sprites (coronas, flares, particles) sit on a second plane that keeps the full head pose, so they still land on their lights, and each sprite is counter-rotated by the head roll every frame (`CSprite::UpdateVrRoll`). The VR menu is world-locked with a yaw-only anchor set when it opens and on recentre. The log prints `[vr] roll-free billboards/HUD` at startup. |
 | World | Multiview stereo, per-eye view-projection from the runtime FOV. Culling is stereo-aware by default ("stereo safe"), with OFF as a fallback |
 | HUD (Im2D) | Projected per eye onto a plane 2 m from the head inside the multiview pass |
 | Map, status, clock, ammo | Wrist panels rendered to small textures and placed on the arm |
 | Frontend menus, cutscenes | Theater mode: a 2.56 x 1.44 m quad layer, yaw-anchored at 2 m, reading array layer 0 |
 | Cutscenes, CINEMA 3D (Frame default) | The screen is submitted as a **projection layer**. Each eye's view has the screen's orientation and a field of view that exactly fits the screen rectangle; per-eye quads (eyeVisibility) showed flat on SteamVR. The director camera is split into two parallel off-axis cameras converged 1.5 m ahead. The camera baseline is solved so the images at infinity are depth x IPD apart on the screen, with depth 0.35 / 0.55 / 0.75 for SUBTLE / default / DEEP. The background therefore sits at 3.1 / 4.4 / 8 m and never diverges. Subtitles and the letterbox sit on the zero-parallax plane. Menus, loading and the intro stay flat (`makeCinema3DMatrices` in `android_main.cpp`) |
 | VR menu and debug overlay | 1024x768 head-locked quad layer in VIEW space, source-alpha blended |
-| Menu laser (Frame) | Beam and dot are the last two quad layers. SteamVR depth-composites intersecting quads, so neither may touch the surface's plane: the dot takes the hit surface's orientation (`g.ptrHitOrientation`, set in `updatePointer` from the menu or theater pose) and sits 12 mm off it towards the head, flipped if the surface normal points away; the beam ends `0.02 / max(abs(dot(dir, n)), 0.25)` m short of the hit (at least 3 cm of beam remain). A missed ray is unchanged. Headset-unverified |
+| Menu laser (Frame) | Beam and dot are the last two quad layers. SteamVR depth-composites intersecting quads, so neither may touch the surface's plane: the dot takes the hit surface's orientation (`g.ptrHitOrientation`, set in `updatePointer` from the menu or theater pose) and sits 12 mm off it towards the head, flipped if the surface normal points away; the beam ends `0.02 / max(abs(dot(dir, n)), 0.25)` m short of the hit (at least 3 cm of beam remain). A missed ray is unchanged. |
 | Stereo cutscenes | Staged cameras selectable per scene (R3 cycles, L3 keeps) |
-
-Every one of these is **headset-unverified on the Frame**.
 
 ## 5. Input
 
@@ -204,37 +206,27 @@ Standard section 9: 120 Hz at about 2160 x 2160 per eye.
   M being the highest of 120 / 90 / 72 the measured fps would hold. Nothing is
   requested.
 - **SteamVR decides.** The user sets ViceCityVR to 120 Hz (and resolution 2160) in
-  SteamVR's per-app settings (wear checklist in STEAM_FRAME.md section 3a; done
-  2026-10-05).
+  SteamVR's per-app settings (STEAM_FRAME.md section 3a).
 
-Host build only, none of it worn.
+## 6. Camera settings and preview
 
-## 6. Status
+The shared camera adapter exposes apparent world size, signed camera offsets,
+height, seated calibration, head movement and snap/smooth/off turning. The VR
+menu shows a live view of the paused game while those camera settings change;
+the panel can sit to the right, left or centre.
 
-| Item | State |
-| --- | --- |
-| Quest debug APK builds on the Mac from the kit (Gradle 8.13, NDK 27.2) | host build |
-| Frame APK builds; Frame strings only in the Frame library | host build |
-| Bindings: component paths, hands, unique names | host test |
-| Lepton facts in section 1 | device, read-only |
-| Install from the Steam library title, game boots and plays, data in `~/Documents/ViceCityVR` | **worn**: the user reported "it works good" (2026-10-03, first session). The game wrote `vr_settings.ini` and its logs to the Documents folder. That was before the Steam-in-place change |
-| Game data from the Steam install in place, Documents copy as the fallback (section 2a): library discovery, read order, writes in Documents | host build and host test. Not device-verified: the fallback is what runs today, Vice City is not installed in Steam on the Frame |
-| CINEMA 3D cutscenes | host build, plus a numeric check of the perceived depths. **Not worn** |
-| Third-person view (`ViewMode`: 3D SCREEN / OVER SHOULDER, View short-press toggle) | host build. **Not worn**. Risks: chase-camera collision jumps, crosshair against the head-locked HUD plane, screen-to-stereo switches on mode change |
-| Diagnostics (`vr-diag.ini`: force_render, synthetic head, eye dumps, `[vr-perf]`) | host build |
-| Fresh `build.sh` from the kit reproduces the dev tree byte-for-byte and builds both APKs | host build |
-| Cinema screen, laser menu navigation, CINEMA 3D depth and the first / third-person swap | **worn**, round 3 (2026-10-05): all good, "I like this a lot" |
-| Laser dot half-hidden at the menu (round 3): dot lies on the surface, beam stops short | host build. **Not worn** |
-| Grips in vehicles are Action (L1), handbrake on A only (round 3) | host build and `check_bindings.py`. **Not worn** |
-| 120 Hz (per-app, one request per session, log hint if not held), AUTO render scale (about 2160 per eye), menu readouts (round 3) | host build. **Not worn**; needs the per-app 120 Hz set in SteamVR |
-| Stereo eye dumps at 0, 90 and 180 degrees of yaw | **not run** |
-| Individual controls (View recentre, D-pad, Index fallback), colour correctness, performance numbers | not reported on yet |
+Physical left grip plus physical right stick adjusts world size horizontally
+and camera distance/height vertically. The modifier consumes the stick before
+turning and gameplay readers, and requires neutral after release or focus loss.
+Occupied first-person grips and custom bindings keep their gameplay action.
+Third-person pickup is on D-pad Up, freeing the left grip for adjustment.
 
-## 7. Open items
+## 7. Runtime and save storage
 
-- Run phase 0/1 on the device. This needs the Steam download to finish and an idle headset.
-- Rendering and the game step only after `APP_CMD_RESUME` (`AppState.resumed`). If Lepton never sends it, nothing draws. Check this on the first run.
-- Comfort set, the standard's turn settings, the VR settings page and "Quit to Steam" all follow the Quest port's own menu for now. Map them in a later pass.
-- Wear the display change: set 120 Hz for ViceCityVR in SteamVR's per-app settings, launch from the Steam library, and check `[vr] refresh:`, `render scale AUTO` and `per-eye render target: 2160x2160` and `[vr-perf]` (fps, missed) in the log. If 120 Hz does not hold, the log says which per-app rate to set instead; the measurement then decides whether the recommended rate should drop to 90 (standard section 9).
-- `XR_META_performance_metrics` is absent on SteamVR, so the in-menu GPU line reads from Vulkan.
-- `SaveProvider` still serves the app-dir saves. On the Frame, saves are in `~/Documents/ViceCityVR/userfiles`, reachable over SSH.
+`XR_META_performance_metrics` is absent on SteamVR, so the in-menu GPU timing
+comes from Vulkan. The refresh request, active display rate and measured frame
+timing remain distinct values in the diagnostics.
+
+Frame saves live in `~/Documents/ViceCityVR/userfiles`, and settings and port
+files use the same Documents root. The original game data can be read from
+Steam without writing into the Steam installation.

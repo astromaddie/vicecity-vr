@@ -59,14 +59,23 @@ The other gameplay controls come from the original VR port and can be changed un
 
 ## Build the Frame version
 
-Build on macOS with Apple Silicon and Rosetta, or Linux with x86-64 Android tools. You'll need Git, JDK 17 or 21, and the Android SDK packages below. Set `JAVA_HOME` and `ANDROID_HOME` to your own tool installations.
+Build on x86-64 Linux, macOS, or x86-64 Ubuntu under Windows WSL2. The Frame is the ARM64 run target, not the build host. The NDK's Linux host tools are x86-64; Apple Silicon Macs need Rosetta for the pinned x86-64 tools.
+
+On Windows, install Ubuntu with [WSL2](https://learn.microsoft.com/windows/wsl/install), then install a Linux JDK 17 or 21 and the Linux Android SDK Command-Line Tools inside Ubuntu. For example, install OpenJDK with `sudo apt update && sudo apt install -y openjdk-17-jdk`, and download/extract the Linux SDK Command-Line Tools under `$HOME/Android/Sdk`. Set `JAVA_HOME` and `ANDROID_HOME` to those Linux installations, not Windows paths, and keep the checkout under the Linux home (for example, `~/src/vicecity-vr`). See Android's [SDK command-line tools](https://developer.android.com/tools/sdkmanager) and [NDK downloads](https://developer.android.com/ndk/downloads). The [detailed build/install guide](docs/STEAM_FRAME.md) has the Frame setup and install steps.
+
+You'll need Git, JDK 17 or 21, Android SDK command-line tools (`sdkmanager`), platform 35, NDK 27.2.12479018 and CMake 3.22.1. Set `JAVA_HOME` and `ANDROID_HOME` to your own installations. The SDK is commonly at `$HOME/Library/Android/sdk` on macOS and `$HOME/Android/Sdk` on Linux or WSL2. Run all commands in Ubuntu Bash under WSL2; do not build from PowerShell. After installing the packages, accept their licenses with `sdkmanager --licenses`.
 
 ```sh
+mkdir -p "$HOME/src"
+cd "$HOME/src"
 git clone --branch steam-frame https://github.com/astromaddie/vicecity-vr.git
 cd vicecity-vr
-export JAVA_HOME="/path/to/jdk"
+export JAVA_HOME="/path/to/jdk-17-or-21"
 export ANDROID_HOME="/path/to/android-sdk"
-sdkmanager "platforms;android-35" "ndk;27.2.12479018" "cmake;3.22.1"
+export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+sdkmanager --sdk_root="$ANDROID_HOME" \
+  "platforms;android-35" "ndk;27.2.12479018" "cmake;3.22.1"
+sdkmanager --licenses
 tools/steam_frame/build.sh --work "$PWD/.frame-build"
 ```
 
@@ -78,19 +87,37 @@ The script fetches the public reVC source at its pinned revision, applies this k
 
 For the original Quest build and manual source assembly, see [BUILDING.md](BUILDING.md).
 
-## Game data and installation
+## Game data, install and play
 
 Use the data from your own copy of the original PC version of GTA Vice City. The Frame build can read an existing Steam installation of the game on the headset, or use files copied from a PC installation.
 
-Connect the Frame, enable SSH access and start **Lepton Development** from its Steam library. The deploy script needs `adb`, SSH and `rsync`. Set your own Frame address, then install:
+The first Steam library entry is created with Valve's public [SteamOS Devkit Client Title Upload](https://partner.steamgames.com/doc/steamhardware/steamframe/loadgames). Pair the Frame with the client, then upload a folder containing the APK with **Name** `ViceCityVR`, **Local Folder** set to that folder, **Start Command** `ViceCity-VR.apk`, and **Runtime** `Android`. For example, stage the APK like this before selecting the folder in the client:
 
 ```sh
-export FRAME_HOST="steamos@YOUR_FRAME_ADDRESS"
-tools/steam_frame/deploy.sh --tree "$PWD/.frame-build/tree" \
-    --game-dir "/path/to/Grand Theft Auto Vice City" --register-title --no-launch
+mkdir -p .frame-upload/vicecity
+cp .frame-build/tree/android/app/build/outputs/apk/frame/app-frame.apk \
+  .frame-upload/vicecity/ViceCity-VR.apk
 ```
 
-If the original game is already installed through Steam on the Frame, leave out `--game-dir`. The script still installs the port's own files and registers the title. Launch **ViceCityVR from the Steam library** so SteamVR supplies the controllers and per-app display settings.
+On Windows, copy `.frame-upload/vicecity` to your Windows Downloads folder (available inside WSL at `/mnt/c/Users/YOUR_WINDOWS_USERNAME/Downloads/`), then select that copied folder in the Devkit Client.
+
+To copy files, enable SSH access to the Frame and set its own address. The build computer needs OpenSSH and `rsync`. If Vice City is installed from Steam on the Frame, copy the port's build-matched files into Documents:
+
+```sh
+export FRAME_HOST="steamos@FRAME_HOST_OR_IP"
+tools/steam_frame/deploy.sh --tree "$PWD/.frame-build/tree" \
+  --port-assets --no-adb --no-install --no-launch
+```
+
+If you use a PC installation instead, supply its folder to copy the retail data and port files together:
+
+```sh
+tools/steam_frame/deploy.sh --tree "$PWD/.frame-build/tree" \
+  --game-dir "/mnt/c/Program Files (x86)/Steam/steamapps/common/Grand Theft Auto Vice City" \
+  --no-adb --no-install --no-launch
+```
+
+The SteamOS Devkit Client creates the first persistent title. Later builds can refresh its APK from SSH when the title directory exists; run `tools/steam_frame/deploy.sh --tree "$PWD/.frame-build/tree" --no-adb --no-launch`. If the client stores the title under a different directory, upload the new APK through the client again. The deploy script does not need Lepton Development for this SSH-only route. For optional ADB development installs, add Android SDK platform-tools (`adb`) to the build computer and start **Lepton Development**. Launch **ViceCityVR from the Steam library** so SteamVR supplies the controllers and per-app display settings.
 
 Copied game data goes in `~/Documents/ViceCityVR/gamedata`. Saves are in `~/Documents/ViceCityVR/userfiles`, and VR settings are in `gamedata/vr_settings.ini`. Inside Lepton, the same root is `/sdcard/Documents/ViceCityVR`.
 
@@ -101,10 +128,10 @@ Pull the updated kit, then build into a new work directory so the current patche
 ```sh
 git pull --ff-only
 tools/steam_frame/build.sh --work "$PWD/.frame-build-update"
-tools/steam_frame/deploy.sh --tree "$PWD/.frame-build-update/tree" --no-launch
+tools/steam_frame/deploy.sh --tree "$PWD/.frame-build-update/tree" --no-adb --no-launch
 ```
 
-Use a new work-directory name for each source update. Keep the same Android signing key when rebuilding, and update the existing installation rather than uninstalling it. Your game data, settings and saves stay in Documents; the deploy script refreshes the port files and the Steam title's APK.
+Use a new work-directory name for each source update. Keep the same Android signing key when rebuilding, and update the existing Steam title rather than creating a second entry. Your game data, settings and saves stay in Documents; the deploy script refreshes the port files and the Steam title's APK.
 
 ## Credits and licenses
 

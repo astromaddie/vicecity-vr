@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Install, launch and feed Vice City VR on a Valve Steam Frame (Android in the
-# Lepton container) from a Mac or Linux host. See docs/STEAM_FRAME.md.
+# Lepton container) from x86-64 Linux, macOS or x86-64 Ubuntu in WSL2. See docs/STEAM_FRAME.md.
 #
 #   tools/steam_frame/deploy.sh [options]
 #
@@ -28,9 +28,10 @@
 #   installs an APK (the APK is built against the matching list):
 #   --port-assets      install them without anything else
 #   --no-port-assets   skip them on an install
-#   --register-title   register ~/devkit-game/ViceCityVR as a persistent Steam
-#                      library title (once). When the title exists, every
-#                      install also refreshes its copy of the APK.
+#   --register-title   developer-only registration via a separately maintained
+#                      devkit-utils checkout; public first uploads should use
+#                      Valve's SteamOS Devkit Client Title Upload instead.
+#                      When the title exists, installs refresh its APK copy.
 #   --no-install       skip adb install
 #   --no-launch        skip starting the game over adb
 #   --logcat SECONDS   after launching, capture SECONDS of log into
@@ -55,8 +56,8 @@
 # started over adb gets no controllers and no focus from SteamVR: use it for
 # logs, and launch the ViceCityVR title from the Steam library to play.
 #
-# Before an unattended run (--diag, --logcat), make sure nobody is wearing the
-# headset: a launch replaces whatever they are playing.
+# Before an unattended run (--diag, --logcat), close the active game: a launch
+# replaces the current session.
 set -euo pipefail
 
 kit="$(cd "$(dirname "$0")/../.." && pwd)"

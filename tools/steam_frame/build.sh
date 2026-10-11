@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Build the Steam Frame APK on a Mac (Apple Silicon) or Linux host.
+# Build the Steam Frame APK on x86-64 Linux, macOS, or x86-64 Ubuntu in WSL2.
 #
 #   tools/steam_frame/build.sh [--work DIR] [--quest]
 #

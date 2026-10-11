@@ -13,97 +13,59 @@ fork also includes live camera previews, grip-and-stick camera adjustment, an
 AUTO target of 2160×2160 per eye and a 120 Hz refresh request. See the
 [README](../README.md) for the feature overview.
 
-## 1. Build on a Mac (Apple Silicon) or Linux
+## 1. Build the APK on a computer
 
-You need:
+Use x86-64 Linux, macOS, or x86-64 Ubuntu under Windows WSL2. The Frame is the ARM64 run target, not the build host; the NDK's Linux host tools are x86-64. Apple Silicon Macs need Rosetta for the pinned x86-64 NDK tools.
 
-- Git and a JDK 17 or 21 (`brew install openjdk@17`).
-- An Android SDK with platform 35, NDK 27.2.12479018 and CMake 3.22.1:
+On Windows, install Ubuntu with [WSL2](https://learn.microsoft.com/windows/wsl/install), then install a Linux JDK 17 or 21 and the Linux Android SDK Command-Line Tools inside Ubuntu. For example, install OpenJDK with `sudo apt update && sudo apt install -y openjdk-17-jdk`, and download/extract the Linux SDK Command-Line Tools under `$HOME/Android/Sdk`. Keep `JAVA_HOME`, `ANDROID_HOME` and the checkout in the Linux filesystem (for example, `~/src/vicecity-vr`), not on a Windows-mounted path. The SDK is commonly `$HOME/Android/Sdk` on Linux or WSL2. See Android's [SDK command-line tools](https://developer.android.com/tools/sdkmanager) and [NDK downloads](https://developer.android.com/ndk/downloads).
 
-  ```sh
-  sdkmanager "platforms;android-35" "ndk;27.2.12479018" "cmake;3.22.1"
-  ```
-
-  The NDK ships x86_64 host tools, so a Mac needs Rosetta.
-
-Then run:
+Install Git, JDK 17 or 21, Android SDK command-line tools (`sdkmanager`), platform 35, NDK 27.2.12479018 and CMake 3.22.1. The SDK is commonly `$HOME/Library/Android/sdk` on macOS and `$HOME/Android/Sdk` on Linux or WSL2.
 
 ```sh
-tools/steam_frame/build.sh            # add --quest to also build the Quest debug APK
-# -> ~/VCVRFrameBuild/tree/android/app/build/outputs/apk/frame/app-frame.apk
+export JAVA_HOME="/path/to/jdk-17-or-21"
+export ANDROID_HOME="/path/to/android-sdk"
+export PATH="$ANDROID_HOME/cmdline-tools/latest/bin:$PATH"
+sdkmanager --sdk_root="$ANDROID_HOME" \
+  "platforms;android-35" "ndk;27.2.12479018" "cmake;3.22.1"
+sdkmanager --licenses
+tools/steam_frame/build.sh --work "$PWD/.frame-build"
 ```
 
-The first run fetches reVC at the tested commit and assembles
-`~/VCVRFrameBuild/tree` with `tools/assemble.sh`. It then commits that tree as
-a local git baseline. Later runs rebuild the tree in place; a clean build takes
-about a minute.
+The first run fetches reVC at the pinned revision, assembles it with this kit's patches and builds the Frame APK. Later runs rebuild the assembled tree in place; delete the tree only when you need to assemble it again from the current kit.
 
-To develop, edit inside the tree, rebuild, and copy the work back into the kit:
+The APK is `.frame-build/tree/android/app/build/outputs/apk/frame/app-frame.apk`. This compiles without GTA Vice City data. Historical build evidence and its exact checked revision are in [PR0 readiness](PR0_READINESS.md).
+
+## 2. Create the Steam title, copy game files and play
+
+The first persistent library entry is created with Valve's public [SteamOS Devkit Client Title Upload](https://partner.steamgames.com/doc/steamhardware/steamframe/loadgames). Pair the Frame with the Devkit Client, then upload a folder containing the APK with **Name** `ViceCityVR`, **Local Folder** set to that folder, **Start Command** `ViceCity-VR.apk`, and **Runtime** `Android`:
 
 ```sh
-tools/steam_frame/sync-from-tree.sh ~/VCVRFrameBuild/tree
+mkdir -p .frame-upload/vicecity
+cp .frame-build/tree/android/app/build/outputs/apk/frame/app-frame.apk \
+  .frame-upload/vicecity/ViceCity-VR.apk
 ```
 
-The sync script refuses to copy a changed reVC file that `overlay/` does not
-carry; that change needs a patch. Delete the tree to reassemble it from the kit.
+On Windows, copy `.frame-upload/vicecity` to your Windows Downloads folder (available inside WSL at `/mnt/c/Users/YOUR_WINDOWS_USERNAME/Downloads/`), then select that copied folder in the Devkit Client.
 
-## 2. Install and play
-
-Setup is done once. Install Grand Theft Auto: Vice City from Steam on the Frame
-if you haven't (app 12110). The game reads it from the Steam library in place,
-so there is nothing to copy. Start **Lepton Development** from the Frame's Steam
-library (adb runs over it), then run:
+Install the original PC game through Steam on the Frame if you want the app to read it directly (Steam app 12110). The game searches Steam libraries and reads the install in place. The port's own files still need to be copied into Documents. Enable SSH to the Frame, set its address, and run the helper from the build computer; it uses SSH and `rsync`, so this route does not need Lepton Development or ADB:
 
 ```sh
-tools/steam_frame/deploy.sh --register-title
+export FRAME_HOST="steamos@FRAME_HOST_OR_IP"
+tools/steam_frame/deploy.sh --tree "$PWD/.frame-build/tree" \
+  --port-assets --no-adb --no-install --no-launch
 ```
 
-When the game starts it looks for Vice City in the Steam library (every library
-listed in `libraryfolders.vdf`, the install folder from the appmanifest). Lepton
-can read Steam's folder but not write to it, which is fine: saves, settings and
-the port's own files all live in Documents.
-
-If Vice City isn't installed in Steam on the Frame, the game uses a copy of the
-data in `~/Documents/ViceCityVR/gamedata` instead. Make one from a PC install:
+If you use a PC game installation instead, copy its retail folders and the matching port files into Documents:
 
 ```sh
-tools/steam_frame/deploy.sh --game-dir "/path/to/Grand Theft Auto Vice City" --register-title
+tools/steam_frame/deploy.sh --tree "$PWD/.frame-build/tree" \
+  --game-dir "/mnt/c/Program Files (x86)/Steam/steamapps/common/Grand Theft Auto Vice City" \
+  --no-adb --no-install --no-launch
 ```
 
-`--from-steam` still works too. It copies the Steam install into Documents on
-the headset as a fallback; you don't need it any more. A copy you already made
-keeps working: when both exist the game prefers Steam, and uses the copy for
-anything Steam doesn't have.
+With no Steam install, the copied files go in `~/Documents/ViceCityVR/gamedata`. The game reads retail folders `data TEXT anim txd skins mp3 movies models Audio`; the port's replacement text, frontend art, VR hands, `neo/` and scripts are installed there too. `--from-steam` can copy the Frame's Steam installation to Documents as a fallback. Saves and settings are in `~/Documents/ViceCityVR/userfiles` and `gamedata/vr_settings.ini`, which survive a Lepton reset. The log line `[vr] game data:` identifies whether the live game used a Steam path or the Documents copy.
 
-A deploy does these things:
-
-- Installs the port's own files in `~/Documents/ViceCityVR/gamedata`: the
-  replacement text, frontend art, VR hands, `neo/` and scripts (the tree's
-  `gamefiles/`). The game always reads these from Documents, never from Steam, so
-  every deploy that installs an APK refreshes them (they are tied to the
-  build). `--port-assets` does only that, `--no-port-assets` skips it.
-- Installs the APK in Lepton Development.
-- Registers the persistent **ViceCityVR** title in the Steam library (the
-  `--register-title` part, only the first time).
-- With `--game-dir` or `--from-steam`, first copies the retail folders the game
-  reads into Documents over SSH: `data TEXT anim txd skins mp3 movies models
-  Audio`.
-
-To see which one the game picked, look for `[vr] game data:` in the log. It says
-either `steam <folder>` or `Documents copy <folder> (no Steam install of app
-12110 found)`, followed by the Documents folder that holds the port's files,
-settings and saves.
-
-Saves and settings go to `~/Documents/ViceCityVR/userfiles` and
-`gamedata/vr_settings.ini`. All of it survives a Lepton reset.
-
-After the first setup, `tools/steam_frame/deploy.sh` installs the new APK and
-refreshes the title's copy. To play, **launch ViceCityVR from the Steam
-library**. A game started by adb gets no controllers and no focus.
-
-`FRAME_HOST` is required and must name the user's own Frame SSH target, for
-example `steamos@frame.local`. Do not copy a host value from another setup.
-`FRAME_ADB_HOST` sets the adb host. `deploy.sh --help` lists the rest.
+The build computer needs OpenSSH and `rsync` for SSH transfers. Set `FRAME_HOST` to your own Frame SSH target. After creating the title, the helper can refresh its APK when the title directory exists, along with the port files. For SSH-only updating, run `tools/steam_frame/deploy.sh --tree "$PWD/.frame-build/tree" --no-adb --no-launch`; if the Devkit Client stored the title elsewhere, upload the new APK through that client. For optional ADB development installs, add Android SDK platform-tools (`adb`), start **Lepton Development**, and run the helper without `--no-adb`; `FRAME_ADB_HOST` can override the ADB host. ADB-started games do not receive the Steam title's controller focus. To play, launch **ViceCityVR** from the Frame's Steam library so SteamVR supplies controller input and per-app display settings.
 
 ## 3. Controls (Frame)
 

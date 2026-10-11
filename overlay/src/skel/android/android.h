@@ -195,6 +195,12 @@ void GetIm2DViewWindow(float *x, float *y);
 void VrDebugUpdate(const PadInput &input);
 const unsigned char *VrDebugPixels(int *width, int *height);
 bool VrMenuConsumesInput(void);
+#if MIAMIVR_STEAM_FRAME
+// Frame-only cutscene skip prompt state and production 2D renderer hook.
+float VrCutsceneSkipProgress(void);
+bool VrCutsceneSkipPromptVisible(void);
+void VrDrawCutsceneSkipPrompt(void);
+#endif
 bool VrViceCityColorEnabled(void);
 bool VrFxaaEnabled(void);
 // Build a mip chain for textures whose TXD carries a single level.

@@ -124,6 +124,12 @@ if [ -f "$REPO/patches/revc-steam-frame.patch" ]; then
         exit 1
     }
 fi
+if [ -f "$REPO/patches/revc-steam-frame-cutscene-skip.patch" ]; then
+    git apply --whitespace=nowarn "$REPO/patches/revc-steam-frame-cutscene-skip.patch" || {
+        echo "The Steam Frame cutscene-skip patch did not apply after the engine patch."
+        exit 1
+    }
+fi
 rm -rf "$OUT/.git"
 
 echo "[3/4] Copying the port sources..."

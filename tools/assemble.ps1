@@ -151,6 +151,14 @@ if (Test-Path $framePatch) {
         Write-Error "The Steam Frame patch did not apply after the runtime v18 patch."
     }
 }
+$cutsceneSkipPatch = Join-Path $repo "patches\revc-steam-frame-cutscene-skip.patch"
+if (Test-Path $cutsceneSkipPatch) {
+    git apply --whitespace=nowarn $cutsceneSkipPatch
+    if ($LASTEXITCODE -ne 0) {
+        Pop-Location
+        Write-Error "The Steam Frame cutscene-skip patch did not apply after the engine patch."
+    }
+}
 Remove-Item -Recurse -Force (Join-Path $Out ".git")
 Pop-Location
 

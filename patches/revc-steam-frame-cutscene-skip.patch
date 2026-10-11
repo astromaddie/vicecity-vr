@@ -1,0 +1,60 @@
+diff --git a/src/animation/CutsceneMgr.h b/src/animation/CutsceneMgr.h
+--- a/src/animation/CutsceneMgr.h
++++ b/src/animation/CutsceneMgr.h
+@@ -41,6 +41,8 @@
+ 	static int32 GetNumCutsceneObjects(void) { return ms_numCutsceneObjs; }
+ 	static int GetCutsceneTimeInMilleseconds(void) { return 1000.0f * ms_cutsceneTimer; }
+ 	static char *GetCutsceneName(void) { return ms_cutsceneName; }
++	// True only when the native skip path can safely finish its camera.
++	static bool CanSkipCutscene(void);
+ 	static void SetCutsceneOffset(const CVector& vec) { ms_cutsceneOffset = vec; }
+ 	static bool HasCutsceneFinished(void);
+
+diff --git a/src/animation/CutsceneMgr.cpp b/src/animation/CutsceneMgr.cpp
+--- a/src/animation/CutsceneMgr.cpp
++++ b/src/animation/CutsceneMgr.cpp
+@@ -576,6 +576,11 @@
+ 			UpdateCutsceneObjectBoundingBox(ms_pCutsceneObjects[i]->GetClump(), modelId);
+ 	}
+
++#if defined(RW_VULKAN) && defined(__ANDROID__) && MIAMIVR_STEAM_FRAME
++	// Frame finishes through the physical-A hold in CapturePad. Suppressing
++	// this entire native tap branch also closes remapped, touch, Start/Menu
++	// and keyboard aliases without altering pad input elsewhere.
++#else
+ 	if (bCamLoaded)
+ 		if (CGeneral::faststricmp(ms_cutsceneName, "finale") && TheCamera.Cams[TheCamera.ActiveCam].Mode == CCam::MODE_FLYBY && ms_cutsceneLoadStatus == CUTSCENE_LOADING_0) {
+ 			if (CPad::GetPad(0)->GetCrossJustDown()
+@@ -585,6 +590,18 @@
+ 				|| CPad::GetPad(0)->GetCharJustDown(' '))
+ 					FinishCutscene();
+ 		}
++#endif
++}
++
++bool
++CCutsceneMgr::CanSkipCutscene(void)
++{
++	// The finale and cameras without a loaded flyby spline have no native
++	// endpoint to hand off to. Keep Frame's hold on this same readiness gate.
++	return ms_running && ms_loaded && bCamLoaded && !HasCutsceneFinished() &&
++		CGeneral::faststricmp(ms_cutsceneName, "finale") &&
++		TheCamera.Cams[TheCamera.ActiveCam].Mode == CCam::MODE_FLYBY &&
++		ms_cutsceneLoadStatus == 0;
+ }
+
+ bool CCutsceneMgr::HasCutsceneFinished(void) { return !bCamLoaded || TheCamera.GetPositionAlongSpline() == 1.0f; }
+diff --git a/src/core/main.cpp b/src/core/main.cpp
+--- a/src/core/main.cpp
++++ b/src/core/main.cpp
+@@ -3134,6 +3134,10 @@
+ 	CDarkel::DrawMessages();
+ 	CGarages::PrintMessages();
+ 	CPad::PrintErrorMessage();
++#if defined(RW_VULKAN) && defined(__ANDROID__) && MIAMIVR_STEAM_FRAME
++	// Draw with the native 2D pass after subtitles and before its font flush.
++	androidgame::VrDrawCutsceneSkipPrompt();
++#endif
+ 	CFont::DrawFonts();
+ #ifndef MASTER
+ 	COcclusion::Render();

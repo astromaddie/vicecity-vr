@@ -113,6 +113,15 @@ and go to LOCOMOTION > CUTSCENES. The row steps through CINEMA SCREEN (flat),
 CINEMA 3D SUBTLE, CINEMA 3D, CINEMA 3D DEEP, and STEREO (immersive, inside the
 shot).
 
+During a cutscene with a ready flyby camera, hold physical **A** for half a
+second to skip. A white ring fills clockwise around the A label beside “Hold to
+skip” at the bottom right. A tap does not skip. The prompt appears only when
+the native cutscene camera can safely finish; “Finale” and scenes without a
+loaded flyby camera remain unskippable. Menu, View, either grip, pause, loss of
+focus, loading, or leaving that camera cancels the hold and requires A release
+before trying again. Completion uses the native `FinishCutscene()` path, which
+preserves the mission script handoff.
+
 ## 3a. Display: native 2160×2160 per eye and 120 Hz
 
 The Frame build defaults to **AUTO** render scale, targeting the Frame's native

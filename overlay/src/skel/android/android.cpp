@@ -13,6 +13,10 @@
 #include "platform.h"
 #include "skeleton.h"
 #include "android.h"
+#if MIAMIVR_STEAM_FRAME
+#include "CutsceneSkipHold.h"
+#include "CutsceneSkipRing.h"
+#endif
 #include "VrVehicleSeatRecenter.h"
 #include "xr_vulkan_session.h"
 
@@ -41,6 +45,10 @@
 #include "Draw.h"
 #include "Renderer.h"
 #include "Streaming.h"
+#if MIAMIVR_STEAM_FRAME
+#include "Font.h"
+#include "Sprite2d.h"
+#endif
 #if MIAMIVR_STEAM_FRAME
 #include "frame_diag.h"
 #endif
@@ -360,6 +368,8 @@ _psGetUserFilesFolder(void)
 
 static androidgame::PadInput gPadInput;
 #if MIAMIVR_STEAM_FRAME
+static CutsceneSkipHold gCutsceneSkipHold;
+static bool gCutsceneSkipPromptVisible;
 static sfvr_adjust_state gCameraScaleAdjustState;
 static sfvr_adjust_config gCameraScaleAdjustConfig;
 static bool gCameraScaleAdjustInitialized;
@@ -382,6 +392,86 @@ GetPadInput(void)
 {
 	return gPadInput;
 }
+
+#if MIAMIVR_STEAM_FRAME
+float
+VrCutsceneSkipProgress(void)
+{
+	return gCutsceneSkipHold.Progress();
+}
+
+bool
+VrCutsceneSkipPromptVisible(void)
+{
+	return gCutsceneSkipPromptVisible;
+}
+
+void
+VrDrawCutsceneSkipPrompt(void)
+{
+	if(!gCutsceneSkipPromptVisible)
+		return;
+
+	wchar prompt[] = { 'H', 'o', 'l', 'd', ' ', 't', 'o', ' ',
+	                   's', 'k', 'i', 'p', 0 };
+	wchar button[] = { 'A', 0 };
+	const float scaleX = SCREEN_SCALE_X(0.85f);
+	const float scaleY = SCREEN_SCALE_Y(0.85f);
+	const float right = SCREEN_SCALE_FROM_RIGHT(24.0f);
+	const float textY = SCREEN_SCALE_FROM_BOTTOM(102.0f);
+	const float radius = SCREEN_SCALE_X(14.0f);
+	const float thickness = SCREEN_SCALE_X(3.0f);
+	const float gap = SCREEN_SCALE_X(9.0f);
+
+	CFont::SetFontStyle(FONT_BANK);
+	CFont::SetPropOn();
+	CFont::SetJustifyOff();
+	CFont::SetCentreOff();
+	CFont::SetRightJustifyOff();
+	CFont::SetBackgroundOff();
+	CFont::SetSlant(0.0f);
+	CFont::SetDropShadowPosition(0);
+	CFont::SetAlphaFade(255.0f);
+	CFont::SetRightJustifyWrap(0.0f);
+	CFont::SetScale(scaleX, scaleY);
+	CFont::SetColor(CRGBA(255, 255, 255, 255));
+	const float textWidth = CFont::GetStringWidth(prompt);
+	const float centerX = right - textWidth - gap - radius;
+	const float centerY = textY + SCREEN_SCALE_Y(9.0f);
+
+	CutsceneSkipRingQuad quad;
+	CutsceneSkipRingQuad polygonArgs;
+	for(int i = 0; i < CutsceneSkipRing::SEGMENTS; i++)
+		if(CutsceneSkipRing::GetSegment(
+		   1.0f, i, centerX, centerY, radius, thickness, &quad) &&
+		   CutsceneSkipRing::GetDraw2DPolygonArguments(quad, &polygonArgs))
+			CSprite2d::Draw2DPolygon(
+				polygonArgs.x[0], polygonArgs.y[0],
+				polygonArgs.x[1], polygonArgs.y[1],
+				polygonArgs.x[2], polygonArgs.y[2],
+				polygonArgs.x[3], polygonArgs.y[3],
+				CRGBA(255, 255, 255, 100));
+	const float progress = gCutsceneSkipHold.Progress();
+	for(int i = 0; i < CutsceneSkipRing::SEGMENTS; i++)
+		if(CutsceneSkipRing::GetSegment(
+		   progress, i, centerX, centerY, radius, thickness, &quad) &&
+		   CutsceneSkipRing::GetDraw2DPolygonArguments(quad, &polygonArgs))
+			CSprite2d::Draw2DPolygon(
+				polygonArgs.x[0], polygonArgs.y[0],
+				polygonArgs.x[1], polygonArgs.y[1],
+				polygonArgs.x[2], polygonArgs.y[2],
+				polygonArgs.x[3], polygonArgs.y[3],
+				CRGBA(255, 255, 255, 255));
+
+	CFont::SetCentreOn();
+	CFont::SetScale(SCREEN_SCALE_X(0.55f), SCREEN_SCALE_Y(0.55f));
+	CFont::PrintString(centerX, centerY - SCREEN_SCALE_Y(7.0f), button);
+	CFont::SetCentreOff();
+	CFont::SetRightJustifyOn();
+	CFont::SetScale(scaleX, scaleY);
+	CFont::PrintString(right, textY, prompt);
+}
+#endif
 
 // The pad button a binding target names. Anything the remapping page cannot
 // reach -- the sticks, Start, the D-pad -- has no entry and is never touched by
@@ -1642,6 +1732,30 @@ CapturePad(RwInt32 padID)
 	const androidgame::PadInput &in = gPadInput;
 #if MIAMIVR_STEAM_FRAME
 	UpdateCameraScaleModifier(&gPadInput);
+	const bool vrMenuConsumes = androidgame::VrMenuConsumesInput();
+	const bool formalCutscene = CCutsceneMgr::IsRunning();
+	const bool conflictingChord = CutsceneSkipHold::HasConflictingChord(
+		in.menu, in.viewBack || in.viewActive, in.leftGrip, in.rightGrip);
+	const bool cutsceneSkipEligible = formalCutscene &&
+		CCutsceneMgr::CanSkipCutscene() &&
+		gGameState == GS_PLAYING_GAME &&
+		!FrontEndMenuManager.m_bGameNotLoaded &&
+		!FrontEndMenuManager.m_bMenuActive &&
+		!FrontEndMenuManager.m_bWantToRestart &&
+		!FrontEndMenuManager.m_bWantToLoad &&
+		!CTimer::GetIsPaused() && gForegroundApp &&
+		xrvk::isSessionFocused() && !vrMenuConsumes &&
+		!conflictingChord;
+	gCutsceneSkipPromptVisible = cutsceneSkipEligible;
+	gCutsceneSkipHold.UpdateAndFinish(
+		in.a, formalCutscene, cutsceneSkipEligible, gVrFrameTimeNs,
+		CCutsceneMgr::GetCutsceneName(),
+		CCutsceneMgr::GetCutsceneTimeInMilleseconds(),
+		[](){ CCutsceneMgr::FinishCutscene(); });
+	const bool consumeCutsceneSkipButton =
+		gCutsceneSkipHold.ConsumesButton(in.a);
+#else
+	const bool consumeCutsceneSkipButton = false;
 #endif
 	if(androidgame::VrMenuConsumesInput())
 		return;
@@ -1768,6 +1882,8 @@ CapturePad(RwInt32 padID)
 	// demolition helicopter drops its bomb through that path). The accelerator
 	// stays on R2, so A must not also reach its own binding here.
 	androidgame::PadInput bound = in;
+	if(consumeCutsceneSkipButton)
+		bound.a = false;
 	if(remoteMode)
 		bound.a = false;
 #if MIAMIVR_STEAM_FRAME
@@ -1806,7 +1922,7 @@ CapturePad(RwInt32 padID)
 	}
 #endif
 	state.Start = in.menu ? 255 : 0;
-	if(remoteMode && in.a){
+	if(remoteMode && bound.a){
 		if(padMode == 3)
 			state.RightShoulder1 = 255;
 		else

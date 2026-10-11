@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-10-11 — Experimental Steam Frame source prep
+
+- Replaced the root landing page with a concise Frame status/build guide; preserved its former Quest source-kit README under `docs/README_PRE_PR0.md`.
+- Recorded current source/device evidence, unworn camera controls, known intermittent stream-wait risk and pending headset acceptance in `docs/PR0_READINESS.md`.
+
 ## 0.5.6
 
 - Added the optional Xbox vehicle profile to the model downloader and asset menu.

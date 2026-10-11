@@ -12,6 +12,10 @@
   at `librw/src/vulkan/SGSR_LICENSE.txt`.
 - **VR hand meshes** (`overlay/gamefiles/models/vrhands/`) — baked from the
   UltimateXR SDK hand models, copyright VRMADA, MIT License.
+- **sfvr** (`overlay/third_party/sfvr/`) — MIT License, copyright Madison
+  (astromaddie); see the copied `LICENSE` and `README.md` for the upstream URL,
+  base revision and local differences. This library notice does not change the
+  licensing of the Vice City port or game data.
 - **This repository contains no complete reVC source tree and no assets from
   the original game or its publishers.** The patch files contain only the
   modifications and context required to transform a user-supplied reVC tree.

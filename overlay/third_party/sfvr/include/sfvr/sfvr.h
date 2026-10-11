@@ -1,6 +1,6 @@
 /* sfvr - shared Steam Frame VR port library. Umbrella header.
  * Implements sections 1, 5, 6, 7 and 8 of the Steam Frame VR port standard
- * (~/.claude/skills/steam-frame-vr-port/references/standard.md). See README.md. */
+ * (STANDARD.md). See README.md for the canonical source and local snapshot notes. */
 #ifndef SFVR_H
 #define SFVR_H
 

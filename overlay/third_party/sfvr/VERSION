@@ -1,1 +1,1 @@
-sfvr 0.1.0 (ad2f545), vendored unedited from ~/code/sfvr
+sfvr base ad2f545; adds sfvr_adjust and sfvr_camera from b09b6e1; local refresh_rate default is 120

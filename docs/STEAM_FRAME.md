@@ -100,8 +100,8 @@ After the first setup, `tools/steam_frame/deploy.sh` installs the new APK and
 refreshes the title's copy. To play, **launch ViceCityVR from the Steam
 library**. A game started by adb gets no controllers and no focus.
 
-`FRAME_HOST` sets the SSH target. The default is `steamos@192.168.1.31`, the
-Frame on Wi-Fi; over USB networking use `steamos@10.86.200.233`.
+`FRAME_HOST` is required and must name the user's own Frame SSH target, for
+example `steamos@frame.local`. Do not copy a host value from another setup.
 `FRAME_ADB_HOST` sets the adb host. `deploy.sh --help` lists the rest.
 
 ## 3. Controls (Frame)

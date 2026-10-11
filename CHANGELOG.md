@@ -3,7 +3,7 @@
 ## 2026-10-11 — Experimental Steam Frame source prep
 
 - Replaced the root landing page with a concise Frame status/build guide; preserved its former Quest source-kit README under `docs/README_PRE_PR0.md`.
-- Recorded current source/device evidence, unworn camera controls, known intermittent stream-wait risk and pending headset acceptance in `docs/PR0_READINESS.md`.
+- Recorded current source checks, isolated ARM64 APK build, signature/alignment results, and artifact hashes in `docs/PR0_READINESS.md` and `docs/PR0_METADATA.json`.
 
 ## 0.5.6
 

@@ -1,0 +1,76 @@
+{
+  "schema_version": 1,
+  "milestone": "PR0",
+  "status": "EXPERIMENTAL",
+  "publication_status": "private preparation; no release published",
+  "tested_commit": "6a4a784e94c7961b5e25f2df1263ba3fbb943039",
+  "supported_targets": [
+    "Steam Frame Lepton / Android ARM64 / SteamVR OpenXR",
+    "Inherited Meta Quest target; outside PR0 acceptance"
+  ],
+  "validation": {
+    "commit": "6a4a784e94c7961b5e25f2df1263ba3fbb943039",
+    "host_commands": [
+      "python3 tools/steam_frame/tests/check_bindings.py",
+      "python3 tools/steam_frame/tests/test_camera_modifier.py",
+      "python3 tools/steam_frame/tests/test_camera_scale.py"
+    ],
+    "host_result": "PASS; bindings, production modifier routing, and production camera scaling checks passed.",
+    "build_command": "tools/steam_frame/build.sh --work \"$PWD/.frame-build\"",
+    "build_result": "PASS; two builds from the same clean assembled Git tree. The independent rebuild used isolated JVM and Gradle homes with no personal Git credentials. This establishes build reproducibility, not bit-for-bit artifact identity.",
+    "source_identity": {
+      "kit_commit": "6a4a784e94c7961b5e25f2df1263ba3fbb943039",
+      "kit_tracked_diff": "clean",
+      "revc_commit": "026cd10f3fdbd92c089830e5067c4457c53c1b51",
+      "revc_tracked_diff": "clean",
+      "assembled_tree_commit": "0ce25c90eb9ccf7efac248b9e320184755bdb1fa",
+      "assembled_tree_sha": "a6199bd3a46f08f9108e286692a3a04fc1162d61",
+      "assembled_tree_tracked_diff": "clean; only generated untracked android/build/ output remains",
+      "isolated_assembled_tree_commit": "03e24dee6fc057c08ba7b6118379d8991c84b31c",
+      "isolated_assembled_tree_sha": "a6199bd3a46f08f9108e286692a3a04fc1162d61"
+    },
+    "apk": {
+      "sha256": "e24615d6ca4dce9ed2a313e4ffa97ddede12f45ff35179cf30a9734a1c1e7fd9",
+      "size_bytes": 3177296,
+      "package": "com.miamivr.quest.frame",
+      "version_code": "522",
+      "version_name": "0.5.6-frame",
+      "signing": "apksigner verification passed with APK Signature Scheme v2; one Android Debug signer generated under isolated HOME; certificate SHA-256 d9fd1922d5b707522dd082d68f650cddba37736a8ab3f18c016c193bc2992927",
+      "alignment": "zipalign -c -P 16 -v 4 passed for all APK entries",
+      "privacy": "Built without a ROM input; APK entries are application manifest, code, ARM64 native libraries and UI resources, with no ROM archive or game-data directory entries."
+    },
+    "full_build": "BUILT; private local APK only, not uploaded, installed, or device-verified."
+  },
+  "full_application_build": "BUILT; private local APK only, not uploaded, installed, or device-verified.",
+  "focused_headset_acceptance": "pending clean candidate acceptance",
+  "sustained_worn_performance": "unmeasured on current candidate",
+  "distribution_blockers": [
+    "reVC and commercial game rights are separate from the MIT build-kit additions; current binary distribution is not cleared",
+    "Focused wearer acceptance and sustained performance remain open"
+  ],
+  "license_scope": "Retained component notices apply to their stated code; they do not grant redistribution rights to commercial ROMs, extracted media, saves or proprietary libraries.",
+  "changelog": "CHANGELOG.md",
+  "build_isolation": "Fresh local source checkout, empty shell HOME, env -i, disabled system/global Git config and no personal Git credentials. Root repositories remain private, so anonymous root cloning cannot be claimed before publication. The independent full build also isolated JVM user.home and GRADLE_USER_HOME; SDK and JDK locations are configurable host inputs.",
+  "acceptance_candidate": {
+    "artifact": "host_identity_candidate",
+    "apk_sha256": "b99445d8a87d423ae1b500bcca87ed4f91f38080a2b7dcd52aa381aef68c44a7",
+    "certificate_sha256": "759fe88fa6e5b76feaa6fe38c399384b1449af8f1198f25382026c2dc7c7fab3",
+    "certificate_relation": "Coordinator-confirmed exact match with read-only installed VC APK certificate.",
+    "status": "Built, signature and 16 KiB alignment verified; pending wearer acceptance. No install/launch occurred.",
+    "assembled_git_tree": "a6199bd3a46f08f9108e286692a3a04fc1162d61",
+    "signing_scope": "Existing first-build artifact uses the host Android Debug certificate, matching the installed APK. The separately isolated build uses a newly generated debug certificate. Neither APK is a public release."
+  },
+  "artifact_comparison": {
+    "method": "SHA-256 over decompressed payload bytes for each regular ZIP entry; no contents emitted.",
+    "host_identity_candidate_entry_count": 13,
+    "independent_isolated_build_entry_count": 13,
+    "differing_entry_count": 1,
+    "differences": [
+      {
+        "path": "lib/arm64-v8a/libmiamivr.so",
+        "host_identity_candidate_sha256": "876bc40ac7f274f528037a1044dde5bbceb1c40069e49ec2c77ddc229112d3b3",
+        "independent_isolated_build_sha256": "e10c2dd6926437701c1bcbd7e26e0d2406514f91003ddab12ee36a0f41e81bc8"
+      }
+    ]
+  }
+}

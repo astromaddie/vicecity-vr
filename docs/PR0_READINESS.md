@@ -9,11 +9,13 @@
 - **External data:** user supplies data from a legally owned Vice City installation, or installs the game from Steam on the Frame. This repository contains no complete reVC tree or original game data. See NOTICE.md.
 - **Fresh build route:** tools/steam_frame/build.sh --work "$PWD/.frame-build"; requires Git, JDK 17/21, Android platform 35, NDK 27.2.12479018 and CMake 3.22.1. It fetches reVC at 026cd10f3fdbd92c089830e5067c4457c53c1b51.
 
+The immutable PR0 test source commit, supported targets and final check results are in [PR0_METADATA.json](PR0_METADATA.json).
+
 ## Evidence
 
 | Surface | Evidence |
 |---|---|
-| Host source/build | Prior runtime source 4fd059d passed production camera checks. Historical ARM64 package candidate used kit `4fd059d7` and renderer tree `09e446dd` with dirty overlays; package/dependency checks and Android v2 signature verification passed (recorded in the architecture guide). No clean assembled-tree or fresh full APK build is claimed for this preparation. |
+| Host source/build | Prior runtime source 4fd059d passed production camera checks. Historical ARM64 package candidate used kit `4fd059d7` and renderer tree `09e446dd` with dirty overlays; package/dependency checks and Android v2 signature verification passed (recorded in the architecture guide). PR0 subsequently rebuilt the full APK from a clean assembled tree, with an independent isolated JVM/Gradle build; exact sources and artifact hashes are in PR0_METADATA.json. |
 | Unattended Frame | The previously observed installed candidate APK above launched via its Steam title and reported profile suggestions. This does not test physical controller input or visuals while worn. |
 | Worn | Earlier port builds were worn, including cinema, menu navigation and first/third-person switching. The current camera preview, physical adjustment/remaps and tracked recentering remain unworn. |
 | Fresh isolated source checks | Passed in a fresh local clone with temporary HOME and Git config disabled. Exact commands are below. |
@@ -38,4 +40,4 @@ bash -n tools/steam_frame/deploy.sh
 env -u FRAME_HOST tools/steam_frame/deploy.sh --no-install --no-launch
 ~~~
 
-The last command is expected to stop at the required-host guard before any SSH, ADB, install or launch step. No full APK rebuild was run in this preparation.
+The last command is expected to stop at the required-host guard before any SSH, ADB, install or launch step. A final fresh APK build passed with isolated JVM/Gradle homes and no personal Git credentials, from kit `6a4a784e94c7961b5e25f2df1263ba3fbb943039` and public reVC `026cd10f3fdbd92c089830e5067c4457c53c1b51`; its clean assembled source tree is `a6199bd3a46f08f9108e286692a3a04fc1162d61`. Signature and 16 KiB alignment checks passed. Artifact identity is in PR0_METADATA.json. It has not been installed or worn.
